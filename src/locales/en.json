@@ -101,6 +101,7 @@
     "backend.error.task_join": "Task join error",
     "backend.install.load_mods": "Load Mods ...",
     "backend.install.mod_failed": "Installation failed: {{name}}",
+    "backend.install.mod_failed_reason": "Installation failed: {{name}} — {{reason}}",
     "backend.install.patch_pak": "Patch Game Pak...",
     "backend.install.process_mod_start": "Start Process Mod: {{name}} ...",
     "backend.install.process_mod_success": "Process Mod: {{name}} Success",

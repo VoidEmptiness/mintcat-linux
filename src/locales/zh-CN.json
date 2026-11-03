@@ -101,6 +101,7 @@
 	"backend.error.task_join": "任务执行错误",
 	"backend.install.load_mods": "加载 Mod ...",
 	"backend.install.mod_failed": "安装失败：{{name}}",
+	"backend.install.mod_failed_reason": "安装失败：{{name}} — {{reason}}",
 	"backend.install.patch_pak": "修补游戏 Pak...",
 	"backend.install.process_mod_start": "开始处理 Mod：{{name}} ...",
 	"backend.install.process_mod_success": "Mod 处理成功：{{name}}",

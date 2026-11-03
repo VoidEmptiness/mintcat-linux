@@ -229,7 +229,7 @@ export interface EventPayloads {
   'install-success': number;
 
   /** 安装错误（字符串或 backend key 对象 { key, name }） */
-  'install-error': string | { key: string; name?: string };
+  'install-error': string | { key: string; name?: string; reason?: string };
 
   // ========================================
   // 任务队列事件

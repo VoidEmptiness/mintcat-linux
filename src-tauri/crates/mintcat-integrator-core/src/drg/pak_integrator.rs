@@ -171,11 +171,14 @@ impl PakIntegrator {
                 Ok(_) => {
                     progress.emit(InstallEvent::StatusLog(json_value(json!({ "key": "backend.install.process_mod_success", "name": mod_info.name }))))?;
                 }
-                Err(_) => {
-                    progress.emit(InstallEvent::Error(json_value(
-                        json!({ "key": "backend.install.mod_failed", "name": mod_info.name }),
-                    )))?;
-                    return Err(anyhow::anyhow!("Mod install failed: {}", mod_info.name));
+                Err(error) => {
+                    // say why (e.g. an Oodle-compressed pak that couldn't be read)
+                    progress.emit(InstallEvent::Error(json_value(json!({
+                        "key": "backend.install.mod_failed_reason",
+                        "name": mod_info.name,
+                        "reason": format!("{error:#}"),
+                    }))))?;
+                    return Err(error.context(format!("Mod install failed: {}", mod_info.name)));
                 }
             }
         }

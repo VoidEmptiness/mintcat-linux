@@ -11,7 +11,13 @@ members = [
     "crates/mintcat-integrator-api",
     "crates/mintcat-integrator-core",
     "crates/mintcat-integrator-ffi",
+    "crates/oodle_loader",
 ]
+
+# repak's Oodle loader saved the downloaded Oodle library next to the program, which an
+# AppImage can't write to: our copy also uses MINTCAT's data folder (crates/oodle_loader)
+[patch."https://github.com/trumank/repak"]
+oodle_loader = { path = "crates/oodle_loader" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

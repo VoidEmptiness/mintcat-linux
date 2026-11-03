@@ -218,9 +218,11 @@ impl RcPakIntegrator {
             progress.emit(InstallEvent::Percent(current_percent))?;
 
             if let Err(e) = self.process_mod(mod_info, ue4ss_enabled) {
-                progress.emit(InstallEvent::Error(json_value(
-                    json!({ "key": "backend.install.mod_failed", "name": mod_info.name }),
-                )))?;
+                progress.emit(InstallEvent::Error(json_value(json!({
+                    "key": "backend.install.mod_failed_reason",
+                    "name": mod_info.name,
+                    "reason": format!("{e:#}"),
+                }))))?;
                 return Err(e);
             }
             progress.emit(InstallEvent::StatusLog(json_value(
