@@ -8,7 +8,8 @@
  * Compact view: only the marks a mod has, right after its tags.
  */
 import React, {useSyncExternalStore} from "react";
-import {Dropdown, Tooltip} from "antd";
+import {ContextMenu} from "@/components/ContextMenu";
+import {Tooltip} from "antd";
 import {BellFilled, DislikeFilled, EyeFilled, FileTextFilled, LikeFilled} from "@ant-design/icons";
 import {t} from "i18next";
 import {ModNotes} from "@/services/ModNotes";
@@ -102,7 +103,7 @@ export function ModListColumnsHeader() {
         </span>
     );
     return (
-        <Dropdown trigger={['contextMenu']}
+        <ContextMenu
                   menu={{
                       items: [{key: 'reset', label: t('cols.resetWidths')}],
                       onClick: () => void ModListAppearance.resetColumnWidth(),
@@ -119,7 +120,7 @@ export function ModListColumnsHeader() {
                     </Tooltip>
                 )}
             </div>
-        </Dropdown>
+        </ContextMenu>
     );
 }
 
@@ -127,14 +128,20 @@ export function ModListColumnsHeader() {
 function contentWidth(column: ModListColumn): number | undefined {
     let widest = 0;
     document.querySelectorAll<HTMLElement>(`.ant-tree .mod-col-${column}`).forEach(cell => {
-        if (column === 'version') {
+        const select = cell.querySelector<HTMLElement>('.ant-select');
+        if (select) {
             // the version picker's text is cut inside the select; measure the text itself
-            const text = cell.querySelector<HTMLElement>('.ant-select-content, .ant-select-selection-item');
-            if (text) widest = Math.max(widest, text.scrollWidth + 34);
-            else widest = Math.max(widest, cell.scrollWidth);
-        } else {
-            widest = Math.max(widest, cell.scrollWidth);
+            const text = select.querySelector<HTMLElement>('.ant-select-selection-item, .ant-select-content-value, .ant-select-content');
+            widest = Math.max(widest, (text?.scrollWidth ?? 40) + 34);
+            return;
         }
+        // the tags etc. as laid out in a row: from the cell's left edge to the last one's right edge
+        const left = cell.getBoundingClientRect().left;
+        let right = left;
+        for (const child of Array.from(cell.children)) {
+            right = Math.max(right, child.getBoundingClientRect().right);
+        }
+        widest = Math.max(widest, right - left);
     });
     return widest > 0 ? widest + 6 : undefined;
 }

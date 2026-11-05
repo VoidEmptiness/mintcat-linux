@@ -1,6 +1,7 @@
 import {t} from "i18next";
+import {ContextMenu} from "@/components/ContextMenu";
 import React, {useState, useSyncExternalStore} from "react";
-import {Button, Dropdown, Flex, InputNumber, MenuProps, Popover, Select, Spin, Switch, Tag, theme, Tooltip} from "antd";
+import {Button, Flex, InputNumber, MenuProps, Popover, Select, Spin, Switch, Tag, theme, Tooltip} from "antd";
 import {ModDescriptionHover} from "@/pages/HomePage/ModDescriptionHover";
 import {BgColorsOutlined, CloseCircleFilled, CloudDownloadOutlined, DisconnectOutlined, FolderOpenOutlined, ThunderboltOutlined} from "@ant-design/icons";
 import {ModListAppearance, readableTextOn} from "@/services/ModListAppearance";
@@ -308,7 +309,7 @@ function ModTreeViewFolder({nodeData, onMenuClick, folders, onMoveToFolder, expa
     ];
     
     return (
-        <Dropdown trigger={['contextMenu']}
+        <ContextMenu
                   menu={{
                       items: contextMenusGroup,
                       onClick: (e) => {
@@ -348,7 +349,7 @@ function ModTreeViewFolder({nodeData, onMenuClick, folders, onMoveToFolder, expa
                           {counts.off > 0 ? ` · ${t('folders.off', {count: counts.off})}` : ""}
                       </span>
                     </span>
-        </Dropdown>
+        </ContextMenu>
     );
 }
 
@@ -1514,7 +1515,7 @@ function TreeViewItemInner({
         const hasVersions = hasProgress;
         const tagTitles = rowInfo.tags;
         return (
-            <Dropdown trigger={['contextMenu']}
+            <ContextMenu
                       menu={{
                           items: contextMenus,
                           onClick: (e) => {
@@ -1596,7 +1597,7 @@ function TreeViewItemInner({
                         <ModStatusIcons nodeData={nodeData}/>
                     </span>
                 </ModTreeViewProgressBackground>
-            </Dropdown>
+            </ContextMenu>
         );
     } else {
         return (

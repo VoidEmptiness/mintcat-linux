@@ -1,5 +1,6 @@
 import React, {memo, useCallback, useState} from 'react';
-import {Avatar, Button, Dropdown, Space, Skeleton, Tag, Tooltip} from 'antd';
+import {ContextMenu} from "@/components/ContextMenu";
+import {Avatar, Button, Space, Skeleton, Tag, Tooltip} from 'antd';
 import {CalendarOutlined, CheckCircleFilled, DownloadOutlined, FileOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
 import type {ListedIndex, ListedState} from '@/services/ListedMods';
 import {CardRequirements, useRequirementPlan} from './CardRequirements';
@@ -94,8 +95,7 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
         : '';
 
     return (
-        <Dropdown
-            trigger={['contextMenu']}
+        <ContextMenu
             menu={{
                 items: contextMenuItems,
                 onClick: handleMenuClick,
@@ -235,7 +235,7 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                     </div>}
                 </div>
             </div>
-        </Dropdown>
+        </ContextMenu>
     );
 });
 
