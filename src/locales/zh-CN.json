@@ -1249,7 +1249,7 @@
 	"profile.backupsTitle": "已删除配置的备份",
 	"profile.backupsHelp": "你选择“保留备份”后删除的配置。恢复会将其重新变为配置；删除会永久移除该备份。",
 	"profile.backupInfo": "{{count}} 个 Mod · 删除于 {{when}}",
-	"profile.restoreBackup": "恢复为配置",
+	"profile.restoreBackup": "恢复为配置（会先询问）",
 	"profile.restored": "已恢复为配置“{{name}}”",
 	"profile.restoredMissing": "其中 {{count}} 个 Mod 已不在 MINTCAT 中，已略过。",
 	"profile.restoreFailed": "无法恢复该配置。",
@@ -1625,5 +1625,9 @@
 	"profile.copyOk": "复制",
 	"profile.deleteTip": "删除此配置（会先询问，并可保留备份）",
 	"profile.inUse": "使用中",
-	"profile.inUseTip": "模组列表显示并用于部署的配置"
+	"profile.inUseTip": "模组列表显示并用于部署的配置",
+	"profile.restoreTitle": "将“{{name}}”恢复为配置？",
+	"profile.restoreAsk": "它会恢复为名为“{{name}}”的配置（如果名称已被占用则为“{{name}} (2)”），包含原来的文件夹、按相同顺序排列的 {{count}} 个模组，以及相同的启用/禁用状态。此后从 MINTCAT 中移除的模组不会恢复。恢复后该备份会从此列表中移除。你当前使用的配置保持不变。",
+	"profile.restoreOk": "恢复",
+	"profile.backupDeleteTip": "永久删除此备份（会先询问）"
 }

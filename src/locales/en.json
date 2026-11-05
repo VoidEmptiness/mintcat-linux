@@ -1249,7 +1249,7 @@
     "profile.backupsTitle": "Backups of deleted profiles",
     "profile.backupsHelp": "Profiles you deleted with \"Keep a backup\". Restore makes one a profile again; Delete removes the backup for good.",
     "profile.backupInfo": "{{count}} mods · deleted {{when}}",
-    "profile.restoreBackup": "Restore as a profile",
+    "profile.restoreBackup": "Restore as a profile (asks first)",
     "profile.restored": "Restored as profile \"{{name}}\"",
     "profile.restoredMissing": "{{count}} mod(s) of it are no longer in MINTCAT and were left out.",
     "profile.restoreFailed": "Couldn't restore the profile.",
@@ -1625,5 +1625,9 @@
     "profile.copyOk": "Copy",
     "profile.deleteTip": "Delete this profile (asks first, and can keep a backup)",
     "profile.inUse": "In use",
-    "profile.inUseTip": "The profile the mod list shows and Deploy uses"
+    "profile.inUseTip": "The profile the mod list shows and Deploy uses",
+    "profile.restoreTitle": "Restore \"{{name}}\" as a profile?",
+    "profile.restoreAsk": "It comes back as a profile named \"{{name}}\" (or \"{{name}} (2)\" if that name is taken) with its folders, its {{count}} mods in the same order, and the same mods on and off. Mods removed from MINTCAT since then are left out. The backup is removed from this list once it's restored. The profile you're using now stays in use.",
+    "profile.restoreOk": "Restore",
+    "profile.backupDeleteTip": "Delete this backup for good (asks first)"
 }

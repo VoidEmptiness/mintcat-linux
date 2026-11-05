@@ -150,6 +150,14 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
 
     private async handleRestoreBackup(backup: ProfileBackup) {
         if (this.state.backupBusy) return;
+        const ok = await MessageBox.confirm({
+            title: t("profile.restoreTitle", {name: backup.name}),
+            content: t("profile.restoreAsk", {name: backup.name, count: backup.mods.length}),
+            okText: t("profile.restoreOk"),
+            cancelText: t("Cancel"),
+            width: 520,
+        });
+        if (!ok) return;
         this.setState({backupBusy: backup.id});
         try {
             const result = await ProfileBackups.restore(backup.id);
@@ -388,7 +396,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                                   loading={this.state.backupBusy === backup.id}
                                                   onClick={() => void this.handleRestoreBackup(backup)}/>
                                       </Tooltip>,
-                                      <Tooltip key="delete" title={t("Delete")}>
+                                      <Tooltip key="delete" title={t("profile.backupDeleteTip")}>
                                           <Button type="text" size="small" danger icon={<DeleteOutlined/>}
                                                   disabled={!!this.state.backupBusy}
                                                   onClick={() => void this.handleDeleteBackup(backup)}/>
