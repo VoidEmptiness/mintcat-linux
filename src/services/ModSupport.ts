@@ -175,6 +175,11 @@ async function run(key: string, task: () => Promise<void>, failTitle: string, er
     notify();
     try {
         await task();
+        // lists that were being read meanwhile may predate the change: read them again after
+        const loading = key.startsWith('nexus:') ? nexusLoading : modioLoading;
+        if (loading) {
+            void loading.then(() => key.startsWith('nexus:') ? loadNexus(true) : loadModio(true));
+        }
         return true;
     } catch (error) {
         console.warn('[ModSupport]', failTitle, error instanceof Error ? error.message : error);
