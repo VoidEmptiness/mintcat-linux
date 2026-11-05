@@ -86,6 +86,7 @@ import { isUe4ssEnabled } from "@/utils/Ue4ssSetting";
 import { perfMark, perfUntilPainted } from "@/utils/perfTrace";
 import { fileNameOf, findMovedSiblings, localModPath, parentDir, relocateLocalMod } from "@/services/LocalModRelocation";
 import { ModSupport } from "@/services/ModSupport";
+import { ModListColumnsHeader } from "./ModStatusIcons";
 
 
 type DeployState = "deployed" | "pending" | "uninstalled" | "notDeployed" | "missing";
@@ -2003,8 +2004,24 @@ export class HomePage extends BasePage<any, ModListPageState> {
         }
     }
 
+    /** The column titles over the list take this much (columns view) */
+    private columnsHeaderHeight(): number {
+        return ModListAppearance.get(ModListAppearance.version()).columns ? 23 : 0;
+    }
+
+    private unlistenAppearance?: () => void;
+
     async componentDidMount(): Promise<void> {
         perfMark('home:mount');
+        // the list's height follows the columns view setting
+        let columns = ModListAppearance.get(ModListAppearance.version()).columns;
+        this.unlistenAppearance = ModListAppearance.subscribe(() => {
+            const now = ModListAppearance.get(ModListAppearance.version()).columns;
+            if (now !== columns) {
+                columns = now;
+                this.forceUpdate();
+            }
+        });
         window.addEventListener("keydown", this.onListKeyDown);
         ConflictActions.setHandler(this.runConflictAction);
         // Wait for core to be ready
@@ -2127,6 +2144,7 @@ export class HomePage extends BasePage<any, ModListPageState> {
     }
 
     componentWillUnmount(): void {
+        this.unlistenAppearance?.();
         window.removeEventListener("keydown", this.onListKeyDown);
         ConflictActions.setHandler(null);
         this.unhookLogPanel();
@@ -2318,8 +2336,9 @@ export class HomePage extends BasePage<any, ModListPageState> {
                             </Typography.Link>
                         </Space>
                         {this.renderSoloBanner()}
+                        <ModListColumnsHeader/>
                         <div style={{
-                            height: window.innerHeight - 145 - this.logPanelOffset - (this.state.solo ? HomePage.SOLO_BANNER_HEIGHT : 0),
+                            height: window.innerHeight - 145 - this.logPanelOffset - (this.state.solo ? HomePage.SOLO_BANNER_HEIGHT : 0) - this.columnsHeaderHeight(),
                             overflow: "hidden",
                             position: "relative",
                         }}>
@@ -2331,7 +2350,7 @@ export class HomePage extends BasePage<any, ModListPageState> {
                                 selectedKeys={this.state.selectedKeys}
                                 checkedKeys={this.state.checkedKeys}
                                 virtual={this.state.virtual}
-                                height={window.innerHeight - 145 - this.logPanelOffset - (this.state.solo ? HomePage.SOLO_BANNER_HEIGHT : 0)}
+                                height={window.innerHeight - 145 - this.logPanelOffset - (this.state.solo ? HomePage.SOLO_BANNER_HEIGHT : 0) - this.columnsHeaderHeight()}
                                 onMenuClick={this.onMenuClick}
                                 onUpdateTreeView={this.updateTreeView}
                                 onCountLabelUpdate={this.updateCountLabel}

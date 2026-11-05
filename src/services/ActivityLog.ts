@@ -7,6 +7,7 @@
  */
 import {t} from "i18next";
 import {emitEvent, listenEvent} from "@/events";
+import {saveActivityEntry} from "@/services/AppLogs";
 
 export type ActivityLevel = 'info' | 'success' | 'warning' | 'error';
 
@@ -73,7 +74,10 @@ function push(level: ActivityLevel, message: string, detail: string | undefined,
     const problem = level === 'error' || level === 'warning';
     if (problem && last && last.message === message && last.level === level
         && (last.detail === detail || !last.detail || !detail) && Date.now() - last.time < 3000) return;
-    entries.push({id: nextId++, time: Date.now(), level, message, detail, source});
+    const entry: ActivityEntry = {id: nextId++, time: Date.now(), level, message, detail, source};
+    entries.push(entry);
+    // kept with this launch's logs (Log panel → earlier launches)
+    if (initialized) saveActivityEntry(entry);
     if (entries.length > MAX_ENTRIES) {
         entries.splice(0, entries.length - MAX_ENTRIES);
     }

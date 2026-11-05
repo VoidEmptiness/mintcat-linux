@@ -14,7 +14,9 @@ import {IntegrateApi} from "@/apis/IntegrateApi.ts";
 import {CacheApi} from "@/apis/CacheApi.ts";
 import {DEFAULT_RELEASE_CHANNEL, RELEASE_CHANNELS, type ReleaseChannel} from "@/apis/mintcat";
 import {StorageAPI} from "@/storage";
-import {Button, Card, ColorPicker, Flex, Form, Input, message, Modal, Select, Switch, Typography} from "antd";
+import {Button, Card, ColorPicker, Flex, Form, Input, InputNumber, message, Modal, Select, Switch, Typography} from "antd";
+import {AppLogs, DEFAULT_KEEP, MAX_KEEP} from "@/services/AppLogs";
+import {appLogDir} from "@tauri-apps/api/path";
 import {ExclamationCircleFilled} from "@ant-design/icons";
 import {FolderAddOutlined} from "@ant-design/icons";
 import {ClipboardApi} from "@/apis/ClipboardApi.ts";
@@ -306,6 +308,9 @@ export function MintCatSettings() {
                                 onChange={onClipboardMonitorChange}
                         />
                     </Form.Item>
+                    <Form.Item label={t("logs.keepLabel")} tooltip={t("help.logsKeep")}>
+                        <LogsKeptSetting/>
+                    </Form.Item>
                     <Form.Item label={t("usageStats.label")} tooltip={t("help.usageStats")}>
                         <Flex gap={8} align="center">
                             <Switch checked={usageStats}
@@ -356,6 +361,10 @@ export function MintCatSettings() {
                                 &nbsp;&nbsp;<DisconnectOutlined/> {t("modList.iconNone")}
                             </Typography.Text>
                         </Flex>
+                    </Form.Item>
+                    <Form.Item label={t("modList.columnsView")} tooltip={t("help.columnsView")}>
+                        <Switch checked={look.columns}
+                                onChange={(checked) => void ModListAppearance.update({columns: checked})}/>
                     </Form.Item>
                     <Form.Item label={t("modList.folderColors")} tooltip={t("help.folderColors")}>
                         <Flex gap={12} align="center">
@@ -413,4 +422,47 @@ export function MintCatSettings() {
             </Card>
         </>
     )
+}
+
+/** How many launches' logs are kept; the oldest are deleted as new launches start */
+function LogsKeptSetting() {
+    const [keep, setKeep] = React.useState<number>(DEFAULT_KEEP);
+    const [stats, setStats] = React.useState<{ launches: number; bytes: number } | null>(null);
+    const refresh = React.useCallback(async () => {
+        try {
+            const sessions = await AppLogs.sessions();
+            setStats({launches: sessions.length, bytes: sessions.reduce((n, s) => n + s.files.reduce((m, f) => m + f.size, 0), 0)});
+        } catch {
+            setStats(null);
+        }
+    }, []);
+    React.useEffect(() => {
+        void AppLogs.keepCount().then(setKeep);
+        void refresh();
+    }, [refresh]);
+    const save = async (value: number | null) => {
+        if (value == null) return;
+        try {
+            const result = await AppLogs.setKeepCount(value);
+            setKeep(result);
+            await refresh();
+        } catch (error) {
+            message.error(String(error));
+        }
+    };
+    const mb = stats ? (stats.bytes / 1024 / 1024).toFixed(stats.bytes < 10 * 1024 * 1024 ? 1 : 0) : "";
+    return (
+        <Flex gap={8} align="center" wrap>
+            <InputNumber min={1} max={MAX_KEEP} value={keep} style={{width: 90}}
+                         onChange={(value) => value != null && setKeep(value)}
+                         onBlur={() => void save(keep)}
+                         onPressEnter={() => void save(keep)}/>
+            <Typography.Text type="secondary" style={{fontSize: 12}}>
+                {t("logs.launches")}{stats ? ` · ${t("logs.now", {count: stats.launches, size: mb})}` : ""}
+            </Typography.Text>
+            <Button size="small" onClick={() => void appLogDir().then(openPath).catch((e) => message.error(String(e)))}>
+                {t("log.openFolder")}
+            </Button>
+        </Flex>
+    );
 }

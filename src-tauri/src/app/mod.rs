@@ -112,8 +112,9 @@ pub fn run() {
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                    // a new file for every launch (older launches: Settings → Logs)
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("mintcat".to_string()),
+                        file_name: Some(crate::app_logs::session_log_name()),
                     }),
                 ])
                 .max_file_size(50_000_000 /* 50MB */)
@@ -133,6 +134,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             download::download_file,
             download::cancel_download,
+            crate::app_logs::list_app_logs,
+            crate::app_logs::prune_app_logs,
+            crate::app_logs::append_activity_log,
+            crate::app_logs::read_app_log,
             crate::secret_store::secret_store_get,
             crate::secret_store::secret_store_set,
             crate::secret_store::secret_store_delete,

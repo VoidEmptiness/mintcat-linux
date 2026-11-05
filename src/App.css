@@ -826,3 +826,61 @@ body::before {
 .support-buttons .support-on.support-down {
     color: var(--ant-color-error);
 }
+
+/* Compact view: only the marks a mod has, after its tags */
+.mod-status-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-inline-start: 2px;
+}
+
+/* Columns view: tags in a fixed column, header over the list */
+.mod-col-tags {
+    width: 180px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+
+.mod-col-tags:empty {
+    mask-image: none;
+}
+
+.mod-col-tags .ant-tag {
+    margin-inline-end: 0;
+    flex: none;
+}
+
+.mod-list-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    font-size: 12px;
+    color: var(--ant-color-text-secondary);
+    border-bottom: 1px solid var(--ant-color-border-secondary);
+    padding-inline-end: var(--mod-list-header-end, 14px);
+    user-select: none;
+}
+
+.mod-list-header-name {
+    margin-inline-end: auto;
+    padding-inline-start: 8px;
+}
+
+.mod-list-header-tags {
+    width: 180px;
+    flex: none;
+}
+
+.mod-list-header-flags {
+    flex: none;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+}

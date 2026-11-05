@@ -52,6 +52,7 @@ tauri-plugin-single-instance = "2"
 
 anyhow = "1"
 log = "0.4.27"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing = { version = "0.1.41", features = ["attributes"] }
 
 # http

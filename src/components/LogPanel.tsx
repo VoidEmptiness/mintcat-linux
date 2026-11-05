@@ -1,10 +1,20 @@
 import React, {useEffect, useRef, useState, useSyncExternalStore} from "react";
 import {t} from "i18next";
-import {Button, Flex, message, theme, Tooltip} from "antd";
-import {ClearOutlined, CloseOutlined, CopyOutlined, FolderOpenOutlined} from "@ant-design/icons";
-import {appLogDir} from "@tauri-apps/api/path";
+import {Button, Flex, message, Select, theme, Tooltip} from "antd";
+import {ClearOutlined, CloseOutlined, CopyOutlined, FileTextOutlined, FolderOpenOutlined} from "@ant-design/icons";
+import {appLogDir, join} from "@tauri-apps/api/path";
 import {openPath} from "@tauri-apps/plugin-opener";
 import {ActivityEntry, ActivityLevel, ActivityLog, formatLogTime, LOG_PANEL_HEIGHT} from "@/services/ActivityLog";
+import {AppLogs, LEGACY_STAMP, stampDate, type LogSession} from "@/services/AppLogs";
+
+const CURRENT = "current";
+
+function sessionLabel(session: LogSession): string {
+    if (session.stamp === LEGACY_STAMP) return t("log.legacyLaunch");
+    const date = stampDate(session.stamp);
+    const when = date ? date.toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"}) : session.stamp;
+    return session.current ? t("log.thisLaunchAt", {when}) : when;
+}
 
 /**
  * Log state for components. Values come from the store's snapshot (a new object on every
@@ -58,7 +68,32 @@ function DotToggle({label, color, count, active, onClick}: {
  */
 export function LogPanel() {
     const {token} = theme.useToken();
-    const {entries, open, version} = useActivityLog();
+    const {entries: liveEntries, open, version} = useActivityLog();
+    // an earlier launch's entries instead of this launch's
+    const [viewing, setViewing] = useState<string>(CURRENT);
+    const [sessions, setSessions] = useState<LogSession[]>([]);
+    const [pastEntries, setPastEntries] = useState<ActivityEntry[]>([]);
+    const viewingSession = viewing === CURRENT ? undefined : sessions.find(s => s.stamp === viewing);
+    const entries: readonly ActivityEntry[] = viewing === CURRENT ? liveEntries : pastEntries;
+    const loadSessions = async () => {
+        try {
+            setSessions(await AppLogs.sessions());
+        } catch (error) {
+            console.warn('[LogPanel] earlier logs not listed', error);
+        }
+    };
+    const showSession = async (stamp: string) => {
+        setViewing(stamp);
+        stickToBottom.current = true;
+        if (stamp === CURRENT) return;
+        const session = sessions.find(s => s.stamp === stamp);
+        try {
+            setPastEntries(session ? await AppLogs.readActivity(session) : []);
+        } catch (error) {
+            setPastEntries([]);
+            message.error(`${t("log.readFailed")}: ${error}`);
+        }
+    };
     const [showErrors, setShowErrors] = useState(false);
     const [showWarnings, setShowWarnings] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -83,7 +118,7 @@ export function LogPanel() {
         if (el && stickToBottom.current) {
             el.scrollTop = el.scrollHeight;
         }
-    }, [version, showErrors, showWarnings, open]);
+    }, [version, showErrors, showWarnings, open, viewing, pastEntries]);
 
     if (!open) {
         return null;
@@ -98,10 +133,26 @@ export function LogPanel() {
 
     const onCopy = async () => {
         try {
-            await navigator.clipboard.writeText(ActivityLog.asText());
+            await navigator.clipboard.writeText(viewing === CURRENT ? ActivityLog.asText() : visible.map(e =>
+                `[${formatLogTime(e.time)}] [${e.source}] ${e.level === 'error' ? 'ERROR: ' : e.level === 'warning' ? 'WARN: ' : ''}${e.message}${e.detail ? ` — ${e.detail}` : ''}`).join('\n'));
             message.success(t("log.copied"));
         } catch {
             message.error(t("log.copyFailed"));
+        }
+    };
+
+    // the full log file of the launch shown (the panel only has the summary)
+    const onOpenFullLog = async () => {
+        try {
+            const list = viewingSession ? [viewingSession] : (await AppLogs.sessions()).filter(s => s.current);
+            const file = list[0]?.files.find(f => f.kind === 'log');
+            if (!file) {
+                message.info(t("log.noFullLog"));
+                return;
+            }
+            await openPath(await join(await appLogDir(), file.name));
+        } catch (e) {
+            message.error(`${t("log.openFolderFailed")}: ${e}`);
         }
     };
 
@@ -135,17 +186,35 @@ export function LogPanel() {
                  }}>
                 {visible.length === 0
                     ? <div style={{opacity: 0.6}}>
-                        {t((showErrors || showWarnings) ? "log.noProblems" : "log.empty")}
+                        {viewingSession && !viewingSession.files.some(f => f.kind === 'activity')
+                            ? t("log.onlyFullLog")
+                            : t((showErrors || showWarnings) ? "log.noProblems" : "log.empty")}
                     </div>
                     : visible.map(entry => <EntryLine key={entry.id} entry={entry} colors={colors}/>)}
             </div>
             <Flex align="center" gap={2} style={{padding: "2px 6px", borderTop: `1px solid ${token.colorBorderSecondary}`}}>
+                <Tooltip title={t("log.launchTip")} mouseEnterDelay={0.5}>
+                    <Select size="small"
+                            value={viewing}
+                            style={{width: 210}}
+                            popupMatchSelectWidth={false}
+                            onOpenChange={(isOpen) => {
+                                if (isOpen) void loadSessions();
+                            }}
+                            onChange={(value: string) => void showSession(value)}
+                            options={[
+                                {value: CURRENT, label: t("log.thisLaunch")},
+                                ...sessions.filter(s => !s.current).map(s => ({value: s.stamp, label: sessionLabel(s)})),
+                            ]}/>
+                </Tooltip>
                 <DotToggle label={t("log.errors")} color={token.colorError} count={errorCount}
                            active={showErrors} onClick={() => setShowErrors(!showErrors)}/>
                 <DotToggle label={t("log.warnings")} color={token.colorWarning} count={warningCount}
                            active={showWarnings} onClick={() => setShowWarnings(!showWarnings)}/>
                 <Button size="small" type="text" icon={<CopyOutlined/>} onClick={onCopy}>{t("log.copy")}</Button>
-                <Button size="small" type="text" icon={<ClearOutlined/>} onClick={() => ActivityLog.clear()}>{t("log.clear")}</Button>
+                <Button size="small" type="text" icon={<ClearOutlined/>} disabled={viewing !== CURRENT}
+                        onClick={() => ActivityLog.clear()}>{t("log.clear")}</Button>
+                <Button size="small" type="text" icon={<FileTextOutlined/>} onClick={onOpenFullLog}>{t("log.openFullLog")}</Button>
                 <Button size="small" type="text" icon={<FolderOpenOutlined/>} onClick={onOpenFolder}>{t("log.openFolder")}</Button>
                 <span style={{flex: 1}}/>
                 <Tooltip title={t("log.close")}>

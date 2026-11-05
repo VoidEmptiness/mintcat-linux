@@ -13,6 +13,8 @@ export interface ModListLook {
     autoLinkColor: string;
     /** Icons in front of local mods: linked automatically / downloaded from / linked by you / not linked */
     linkIcons: boolean;
+    /** Columns view: a header over the list, tags and flags (note, endorsed/liked, tracked/subscribed) in aligned columns */
+    columns: boolean;
     /** Folder key ("folder-12") → color */
     folderColors: Record<string, string>;
 }
@@ -30,6 +32,7 @@ let look: ModListLook = {
     autoLinkColorEnabled: false,
     autoLinkColor: DEFAULT_AUTO_LINK_COLOR,
     linkIcons: false,
+    columns: true,
     folderColors: {},
 };
 let version = 0;
@@ -86,6 +89,7 @@ export const ModListAppearance = {
                 autoLinkColorEnabled: parsed.autoLinkColorEnabled === true,
                 autoLinkColor: isColor(parsed.autoLinkColor) ? parsed.autoLinkColor : DEFAULT_AUTO_LINK_COLOR,
                 linkIcons: parsed.linkIcons === true,
+                columns: parsed.columns !== false,
                 folderColors,
             };
             notify();

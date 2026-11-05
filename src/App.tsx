@@ -10,6 +10,7 @@ import TitleBar from "@/components/TitleBar.tsx";
 import StatusBar from "@/components/StatusBar.tsx";
 import LogPanel from "@/components/LogPanel";
 import {initActivityLog} from "@/services/ActivityLog";
+import {AppLogs} from "@/services/AppLogs";
 import {logStartup} from "@/services/StartupLog";
 import {RepositoryUpdates} from "@/services/RepositoryUpdates";
 import MenuBar, {MenuPage} from "@/components/MenuBar.tsx";
@@ -122,6 +123,8 @@ const AppContent = () => {
                 ModDescriptions.init().catch(console.error);
                 DeleteConfirm.init().catch(console.error);
                 ModListAppearance.init().catch(console.error);
+                // logs of launches beyond the number kept (Settings) go now
+                AppLogs.prune().catch(e => console.warn('[App] old logs not pruned', e));
                 Backups.startAuto();
                 UsageStats.start().catch(console.error);
                 // the picked app icon on the window and the app menu entry (again after an update)

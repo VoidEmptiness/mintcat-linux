@@ -1,4 +1,5 @@
 pub mod app;
+pub mod app_logs;
 pub mod backup;
 pub mod clipboard_watch;
 pub mod control_plane;

@@ -1,11 +1,11 @@
 /**
- * Small fixed columns at the right of each mod row, so the marks line up instead of piling
- * up next to the tags:
- *   note      your note on the mod (click to edit, hover to read)
- *   liked     endorsed on Nexus Mods / liked or disliked on mod.io
- *   following tracked on Nexus Mods / subscribed on mod.io
- * A column is only there when something can show in it (any note saved; a Nexus key or a
- * mod.io token saved), and a row's cell stays empty when it doesn't apply.
+ * The marks of a mod row: your note (click to edit, hover to read), endorsed on Nexus Mods /
+ * liked or disliked on mod.io, tracked on Nexus Mods / subscribed on mod.io.
+ *
+ * Columns view (Settings → Mod list): fixed cells at the right of each row under a "Flags"
+ * header, so the marks line up; a cell stays empty when it doesn't apply. The note cell is
+ * there once any mod has a note, the other two when a Nexus key or mod.io token is saved.
+ * Compact view: only the marks a mod has, right after its tags.
  */
 import React, {useSyncExternalStore} from "react";
 import {Tooltip} from "antd";
@@ -16,18 +16,20 @@ import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
 import {NEXUSMODS_PLATFORM} from "@/apis/nexusmods/types";
 import {ModSourceType} from "@/models/mod/types";
 import {editModNote} from "@/dialogs/ModNoteDialog";
+import {ModListAppearance} from "@/services/ModListAppearance";
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
-function Cell({children}: { children?: React.ReactNode }) {
-    return <span className="mod-status-cell" onMouseDown={stop} onDoubleClick={stop}>{children}</span>;
+/** Which flag cells the columns view shows (the same for every row and the header) */
+export function useFlagColumns(): { notes: boolean; support: boolean; columns: boolean } {
+    useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
+    useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    const look = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version));
+    return {notes: ModNotes.hasAny(), support: ModSupport.anyAccount(), columns: look.columns};
 }
 
 export function ModStatusIcons({nodeData}: { nodeData: any }) {
-    useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
-    useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
-    const showNotes = ModNotes.hasAny();
-    const showSupport = ModSupport.anyAccount();
+    const {notes: showNotes, support: showSupport, columns} = useFlagColumns();
     if (!showNotes && !showSupport) return null;
 
     const name = nodeData.title || nodeData.nameId || "";
@@ -53,27 +55,49 @@ export function ModStatusIcons({nodeData}: { nodeData: any }) {
     if (modio?.subscribed) {
         following = <Tooltip title={t('support.isSubscribed')}><BellFilled className="mod-status-icon mod-status-on"/></Tooltip>;
     }
+    const noteIcon = note ? (
+        <Tooltip title={<div className="mod-note-tooltip">{note}</div>} styles={{root: {maxWidth: 420}}}>
+            <FileTextFilled className="mod-status-icon mod-status-note"
+                            role="button"
+                            aria-label={t('notes.editMenu')}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                void editModNote(nodeData.modId, name);
+                            }}/>
+        </Tooltip>
+    ) : null;
 
+    if (!columns) {
+        if (!noteIcon && !liked && !following) return null;
+        return (
+            <span className="mod-status-inline" onMouseDown={stop} onDoubleClick={stop}>
+                {noteIcon}{liked}{following}
+            </span>
+        );
+    }
     return (
-        <span className="mod-status-columns">
-            {showNotes && (
-                <Cell>
-                    {note && (
-                        <Tooltip title={<div className="mod-note-tooltip">{note}</div>}
-                                 styles={{root: {maxWidth: 420}}}>
-                            <FileTextFilled className="mod-status-icon mod-status-note"
-                                            role="button"
-                                            aria-label={t('notes.editMenu')}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                void editModNote(nodeData.modId, name);
-                                            }}/>
-                        </Tooltip>
-                    )}
-                </Cell>
-            )}
-            {showSupport && <Cell>{liked}</Cell>}
-            {showSupport && <Cell>{following}</Cell>}
+        <span className="mod-status-columns" onMouseDown={stop} onDoubleClick={stop}>
+            {showNotes && <span className="mod-status-cell">{noteIcon}</span>}
+            {showSupport && <span className="mod-status-cell">{liked}</span>}
+            {showSupport && <span className="mod-status-cell">{following}</span>}
         </span>
+    );
+}
+
+/** Column titles over the list (columns view only) */
+export function ModListColumnsHeader() {
+    const {notes, support, columns} = useFlagColumns();
+    if (!columns) return null;
+    const flagCells = (notes ? 1 : 0) + (support ? 2 : 0);
+    return (
+        <div className="mod-list-header" role="row">
+            <span className="mod-list-header-name">{t('modList.colMod')}</span>
+            <span className="mod-list-header-tags">{t('modList.colTags')}</span>
+            {flagCells > 0 && (
+                <Tooltip title={[notes ? t('modList.colNoteTip') : '', support ? t('modList.colSupportTip') : ''].filter(Boolean).join(' ')}>
+                    <span className="mod-list-header-flags" style={{width: flagCells * 20 - 2}}>{t('modList.colFlags')}</span>
+                </Tooltip>
+            )}
+        </div>
     );
 }

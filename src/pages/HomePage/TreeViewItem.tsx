@@ -1432,6 +1432,7 @@ function TreeViewItemInner({
     // Note / support entries follow the saved note and the accounts' lists
     useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
     useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    const columnsView = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version)).columns;
     const hasNote = !!ModNotes.get(nodeData.modId);
     const supportKind = nodeData.platformId
         ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
@@ -1504,6 +1505,26 @@ function TreeViewItemInner({
     ];
 
     if (nodeData.isLeaf) {
+        const hasProgress = nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM;
+        const versionTag = nodeData.versions.length > 0 && nodeData.versions[0] !== "1.40" ? nodeData.versions[0] : undefined;
+        const approval = nodeData.approval === "Verified" ? {color: "blue", short: "V", title: t("Verified")}
+            : nodeData.approval === "Approved" ? {color: "green", short: "A", title: t("Approved")}
+                : nodeData.approval === "Sandbox" ? {color: "orange", short: "S", title: t("Sandbox")} : undefined;
+        const tagTitles: string[] = [...nodeData.tags,
+            ...(nodeData.required === true ? ["RequiredByAll"] : []),
+            ...(versionTag ? [versionTag] : []),
+            ...(approval ? [approval.title] : [])];
+        const tagElements = (
+            <>
+                {nodeData.tags.map((tagName: string) => (
+                    <Tag key={tagName}>{tagName}</Tag>
+                ))}
+                {nodeData.required === true && (
+                    <Tag color="orange">RequiredByAll</Tag>)}
+                {versionTag && <Tag color="red">{versionTag}</Tag>}
+                {approval && <Tag color={approval.color} title={approval.title}>{approval.short}</Tag>}
+            </>
+        );
         return (
             <Dropdown trigger={['contextMenu']}
                       menu={{
@@ -1562,29 +1583,15 @@ function TreeViewItemInner({
                         </ModDescriptionHover>
                     }
 
-                    {/* 右侧区域：tags 靠右 */}
+                    {/* 右侧区域：tags 靠右 (columns view: tags and flags in fixed-width columns) */}
                     <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-                        {nodeData.tags.map(tagName => (
-                            <Tag key={tagName}>{tagName}</Tag>
-                        ))}
-
-                        {nodeData.required === true && (
-                            <Tag color="orange">RequiredByAll</Tag>)}
-
-                        {nodeData.versions.length > 0 && nodeData.versions[0] !== "1.40" && (
-                            <Tag color="red">{nodeData.versions[0]}</Tag>)}
-
-                        {nodeData.approval === "Verified" ? (
-                                <Tag color="blue" title={t("Verified")}>V</Tag>) :
-                            nodeData.approval === "Approved" ? (
-                                    <Tag color="green" title={t("Approved")}>A</Tag>) :
-                                nodeData.approval === "Sandbox" ? (
-                                        <Tag color="orange" title={t("Sandbox")}>S</Tag>) :
-                                    null}
-
-                        {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
-                            <ModTreeViewProgressPercent nodeData={nodeData}/>
-                        }
+                        {columnsView && hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                        {columnsView
+                            ? <Tooltip title={tagTitles.length > 0 ? tagTitles.join(" · ") : undefined} mouseEnterDelay={0.5}>
+                                <span className="mod-col-tags">{tagElements}</span>
+                            </Tooltip>
+                            : tagElements}
+                        {!columnsView && hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
 
                         <ModStatusIcons nodeData={nodeData}/>
                     </span>
