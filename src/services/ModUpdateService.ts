@@ -1,4 +1,5 @@
 import {logActivity, nameList} from "@/services/ActivityLog";
+import {decodeHtmlEntities} from "@/utils/HtmlEntities";
 import { t } from "i18next";
 import { exists, stat, remove } from "@tauri-apps/plugin-fs";
 import { emitEvent } from "@/events";
@@ -136,10 +137,13 @@ export class ModUpdateService {
             ? new Map(unresolvedInfoList.map(m => [m.name_id, m]))
             : null;
 
+        let step = 0;
         for (const mod of modioMods) {
+            step++;
             try {
                 if (showStatus) {
-                    await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                    // status bar only: one Log line per mod buried the Log (300 lines per check)
+                    await StatusBar.progress(t("Batch updating mod info step", { name: mod.displayName, step, total: modioMods.length }));
                 }
 
                 const modInfoByPlatformId = mod.platformId > 0 ? modInfoMap?.get(mod.platformId) : undefined;
@@ -247,12 +251,12 @@ export class ModUpdateService {
             modsToDownload.push(...refreshedMods);
         }
         for (const mod of modcatMods) {
-            await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+            await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
             const refreshed = await this.updateModMetadataOnly(mod);
             modsToDownload.push(refreshed ?? mod);
         }
         for (const mod of nexusMods) {
-            await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+            await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
             const refreshed = await this.updateModMetadataOnly(mod);
             modsToDownload.push(refreshed ?? mod);
         }
@@ -332,8 +336,8 @@ export class ModUpdateService {
         const modData = await modsApi.getModById(modId);
         if (!modData) return;
 
-        // 获取远程名称
-        const remoteName = modInfo.name || "";
+        // 获取远程名称 (mod.io sends it HTML-escaped)
+        const remoteName = decodeHtmlEntities(modInfo.name || "");
 
         const platformId = modInfo.id || modData.platformId || 0;
         // 优先使用 API 返回的原始标签；若 API 未返回则尝试单独拉取
@@ -474,7 +478,7 @@ export class ModUpdateService {
                 modcatMods,
                 async (mod) => {
                     if (showStatus) {
-                        await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                        await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
                     }
                     await this.updateModMetadataOnly(mod);
                     return mod;
@@ -489,7 +493,7 @@ export class ModUpdateService {
                 nexusMods,
                 async (mod) => {
                     if (showStatus) {
-                        await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                        await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
                     }
                     await this.updateModMetadataOnly(mod);
                     return mod;

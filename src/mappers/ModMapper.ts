@@ -1,4 +1,5 @@
 import { ModSourceType, ModApprovalStatus } from '@/models/mod/types';
+import {decodeHtmlEntities} from "@/utils/HtmlEntities";
 import type { CompleteModData } from '@/storage/dao/ModDAO';
 import { TimeUtils } from '@/utils/TimeUtils';
 import type { ModcatModEntity } from '@/apis/modcat/types';
@@ -25,7 +26,8 @@ export class ModMapper {
         const rawTags = modInfo.tags ? modInfo.tags.map((tag: any) => tag.name) : [];
         const { tags, versions, approval } = ModMapper.parseTags(rawTags);
 
-        const modName = modInfo.name || "";
+        // mod.io sends names HTML-escaped ("A &amp; B")
+        const modName = decodeHtmlEntities(modInfo.name || "");
 
         const dto: CompleteModData = {
             modId: undefined,  // 尚未存入数据库

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import {decodeHtmlEntities, hasHtmlEntities} from "@/utils/HtmlEntities";
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { IoC } from '@/core/IoC.ts';
 import { StorageAPI } from '@/storage';
@@ -91,6 +92,7 @@ export class AppInitializer {
             // 一次性修复：清除历史数据中被错误写入的 usedVersion
             // usedVersion 应只在用户手动切换版本时才写入，但旧逻辑在添加 mod 时错误地写入了当前版本
             await this.fixUsedVersionData();
+            await this.fixEscapedModNames();
 
             // 应用网络代理设置（使后端下载等请求可走 Clash 等代理）
             await this.applyNetworkProxy();
@@ -205,6 +207,28 @@ export class AppInitializer {
             }
         } catch (error) {
             console.warn('[AppInitializer] Could not check the database journal mode', error);
+        }
+    }
+
+    /**
+     * Names saved from mod.io before they were un-escaped ("Cargo &amp; Lost Pack Progress"):
+     * store them as plain text (cheap: only names with an escaped character are touched)
+     */
+    private static async fixEscapedModNames(): Promise<void> {
+        try {
+            const mods = await StorageAPI.getMods();
+            let fixed = 0;
+            for (const mod of await mods.getAllMods()) {
+                if (mod.modId == null || (!hasHtmlEntities(mod.displayName) && !hasHtmlEntities(mod.originalName))) continue;
+                await mods.updateMod(mod.modId, {
+                    displayName: decodeHtmlEntities(mod.displayName ?? ""),
+                    originalName: decodeHtmlEntities(mod.originalName ?? ""),
+                });
+                fixed++;
+            }
+            if (fixed > 0) console.info(`[AppInitializer] Un-escaped ${fixed} mod name(s)`);
+        } catch (error) {
+            console.warn('[AppInitializer] Failed to un-escape mod names:', error);
         }
     }
 

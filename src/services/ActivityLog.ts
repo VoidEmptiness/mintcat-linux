@@ -212,6 +212,8 @@ export async function initActivityLog(): Promise<void> {
     });
 
     await listenEvent('status-bar-log', (msg) => {
+        // progress steps only show in the status bar
+        if (msg && typeof msg === 'object' && (msg as { transient?: boolean }).transient) return;
         const {text, level} = translateStatusMessage(msg);
         push(level, text, undefined, 'status');
     });

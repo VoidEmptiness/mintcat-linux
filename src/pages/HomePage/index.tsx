@@ -66,6 +66,8 @@ import { InstallOrder, ListDisplayOptions } from "@/services/ListDisplay";
 import { folderPaths, rememberOpen, restoreOpen } from "./FolderOpenState";
 import { RepositoryUpdates } from "@/services/RepositoryUpdates";
 import { logActivity, nameList } from "@/services/ActivityLog";
+import StatusBar from "@/components/StatusBar";
+import { TimeUtils } from "@/utils/TimeUtils";
 import { DeployLog, type DeployRecord } from "@/services/DeployLog";
 import { RepositoryLinkDialog } from "@/dialogs/RepositoryLinkDialog";
 import { UpdateReviewDialog } from "@/dialogs/UpdateReviewDialog";
@@ -657,6 +659,18 @@ export class HomePage extends BasePage<any, ModListPageState> {
 
     @autoBind
     private async onMenuBarUpdateClick() {
+        try {
+            await this.checkForUpdates();
+        } catch (error) {
+            console.error('[HomePage] update check failed', error);
+            await StatusBar.error(t("updateCheck.failed", {reason: error instanceof Error ? error.message : String(error)}));
+            return;
+        }
+        message.success(t("Update Finish"));
+    }
+
+    /** Check Updates: mod.io/ModCat/Nexus info, local files, Pak Hub posts; then say what it found */
+    private async checkForUpdates() {
         await ModUpdateService.checkModUpdate();
         await ModUpdateService.checkModList((loading) => {
             this.setState({ loading });
@@ -673,12 +687,16 @@ export class HomePage extends BasePage<any, ModListPageState> {
         const onlineMods = scopedMods.filter(
             m => m.sourceType === ModSourceType.Modio || m.sourceType === MODCAT_PLATFORM || m.sourceType === "modcat" || m.sourceType === NEXUSMODS_PLATFORM
         );
+        let unchecked = 0;
         if (onlineMods.length > 0) {
-            await ModUpdateService.refreshOnlineMetadata(onlineMods, 3);
+            unchecked = (await ModUpdateService.refreshOnlineMetadata(onlineMods, 3)).errors.length;
         }
+        await StatusBar.progress(t("updateCheck.pakHub"));
         // Local mods that come from a Pak Hub style repository
+        let pakHubUpdates = 0;
         try {
             const repoResult = await RepositoryUpdates.checkAll(scopedMods);
+            pakHubUpdates = repoResult.reviews.length;
             if (repoResult.reviews.length > 0 || repoResult.linked > 0) {
                 await logActivity('info', t("repoUpdate.reviewSummary", {found: repoResult.reviews.length, linked: repoResult.linked}), undefined, 'repository');
             }
@@ -689,7 +707,34 @@ export class HomePage extends BasePage<any, ModListPageState> {
         }
         await this.updateTreeView();
         await this.updateCountLabel();
-        message.success(t("Update Finish"));
+        await this.reportUpdateCheck(profileMods, pakHubUpdates, unchecked);
+    }
+
+    /**
+     * The end of Check Updates in the status bar and the Log: which enabled online mods have a
+     * newer version (same rule as the row's update mark; they download on the next Deploy)
+     */
+    private async reportUpdateCheck(profileMods: { modId: number; isEnabled?: boolean; usedVersion?: string }[],
+                                    pakHubUpdates: number, unchecked: number) {
+        const enabled = profileMods.filter(pm => pm.isEnabled !== false);
+        const pinned = new Set(enabled.filter(pm => pm.usedVersion).map(pm => pm.modId));
+        const modsApi = await StorageAPI.getMods();
+        const loaded = await modsApi.getBatchCompleteModDataOptimized(enabled.map(pm => pm.modId));
+        const newer = loaded.filter(m => m.sourceType !== ModSourceType.Local
+            && !pinned.has(m.modId!)
+            && (m.download?.downloadProgress ?? 0) === 100
+            && TimeUtils.hasUpdate(m.status?.onlineUpdateDate ?? 0, m.status?.lastUpdateDate ?? 0));
+        const names = newer.map(m => m.displayName).sort((a, b) => a.localeCompare(b));
+        if (newer.length === 0 && pakHubUpdates === 0) {
+            await StatusBar.success(unchecked > 0
+                ? t("updateCheck.upToDatePartly", {count: unchecked})
+                : t("updateCheck.upToDate"));
+            return;
+        }
+        if (newer.length > 0) {
+            await logActivity('info', t("updateCheck.newerList", {count: newer.length}), nameList(names), 'update');
+        }
+        await StatusBar.success(t("updateCheck.found", {count: newer.length, pakHub: pakHubUpdates}));
     }
 
     @autoBind

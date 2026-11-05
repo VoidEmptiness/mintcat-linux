@@ -205,6 +205,14 @@ StatusBar.info = async function(message: string) {
 };
 
 /**
+ * Progress step: shown in the status bar but not added to the Log (e.g. one line per mod while
+ * checking 300 mods for updates; the Log gets the start and the result instead)
+ */
+StatusBar.progress = async function(message: string) {
+    await emitEvent('status-bar-log', { message, level: 'info', transient: true });
+};
+
+/**
  * 静态方法：发送 success 级别日志
  */
 StatusBar.success = async function(message: string) {

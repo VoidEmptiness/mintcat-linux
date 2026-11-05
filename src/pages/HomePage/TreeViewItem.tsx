@@ -1133,9 +1133,10 @@ function ModTreeViewLocalTitle({nodeData}) {
             <span style={{
                 marginRight: 6,
                 flexShrink: 0,
+                // linked ones stand out from the grey "not linked" icon (a grey chain looked the same)
                 color: !link ? token.colorTextQuaternary
                     : link.via === 'auto' ? (look.autoLinkColor || token.colorInfo)
-                        : token.colorTextSecondary,
+                        : token.colorLink,
             }}>
                 {!link ? <DisconnectOutlined/>
                     : link.via === 'auto' ? <ThunderboltOutlined/>

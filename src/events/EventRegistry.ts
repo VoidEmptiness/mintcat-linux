@@ -38,7 +38,8 @@ export interface EventPayloads {
   // ========================================
 
   /** 状态栏日志消息 */
-  'status-bar-log': string | { message: string; level?: 'info' | 'success' | 'warning' | 'error' };
+  /** transient: shown in the status bar only, not added to the Log (progress steps) */
+  'status-bar-log': string | { message: string; level?: 'info' | 'success' | 'warning' | 'error'; transient?: boolean };
 
   /** Entry for the bottom Log panel (from any window) */
   'activity-log': { level: 'info' | 'success' | 'warning' | 'error'; message: string; detail?: string; source?: string };
