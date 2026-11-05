@@ -358,24 +358,6 @@ export class NexusModsApi {
                             name
                             avatar
                         }
-                        modRequirements {
-                            nexusRequirements {
-                                nodes {
-                                    modId
-                                    modName
-                                    url
-                                    notes
-                                    externalRequirement
-                                    gameId
-                                }
-                            }
-                            dlcRequirements {
-                                notes
-                                gameExpansion {
-                                    name
-                                }
-                            }
-                        }
                     }
                     totalCount
                     nodesCount
@@ -409,7 +391,7 @@ export class NexusModsApi {
             const start = params.page * params.pageSize;
             const end = start + params.pageSize;
             return {
-                items: filteredNodes.slice(start, end),
+                items: await NexusModsApi.withRequirements(filteredNodes.slice(start, end)),
                 total: filteredNodes.length,
                 page: params.page,
                 pageSize: params.pageSize,
@@ -424,7 +406,7 @@ export class NexusModsApi {
             count: requestPageSize,
         });
 
-        const items = data.mods?.nodes ?? [];
+        const items = await NexusModsApi.withRequirements(data.mods?.nodes ?? []);
         const total = data.mods?.totalCount ?? items.length;
         return {
             items,
@@ -433,6 +415,54 @@ export class NexusModsApi {
             pageSize: params.pageSize,
             hasMore: (params.page + 1) * params.pageSize < total,
         };
+    }
+
+    /**
+     * The requirements of the mods shown, in a second small request: asking for them in the
+     * search itself makes Nexus refuse searches ("query has complexity of 17200, which exceeds
+     * max complexity of 10000"), since a search fetches 100 mods at a time. Without them the
+     * cards just show no requirements.
+     */
+    private static async withRequirements(nodes: NexusModsModNode[]): Promise<NexusModsModNode[]> {
+        const wanted = nodes.filter(n => n.modId && (n.gameId || n.game?.id));
+        const CHUNK = 40;
+        for (let i = 0; i < wanted.length; i += CHUNK) {
+            const chunk = wanted.slice(i, i + CHUNK);
+            try {
+                const data = await NexusModsApi.graphql<{ mods?: { nodes?: { modId: number; gameId?: number; modRequirements?: NexusModsModNode['modRequirements'] }[] } }>(
+                    `query ModRequirements($filter: ModsFilter, $count: Int) {
+                        mods(filter: $filter, count: $count) {
+                            nodes {
+                                modId
+                                gameId
+                                modRequirements {
+                                    nexusRequirements { nodes { modId modName url notes externalRequirement gameId } }
+                                    dlcRequirements { notes gameExpansion { name } }
+                                }
+                            }
+                        }
+                    }`,
+                    {
+                        // gameId has to be next to each modId
+                        filter: {
+                            op: 'OR',
+                            filter: chunk.map(n => ({
+                                gameId: [{value: String(n.gameId || n.game?.id), op: 'EQUALS'}],
+                                modId: [{value: String(n.modId), op: 'EQUALS'}],
+                            })),
+                        },
+                        count: chunk.length,
+                    });
+                const byKey = new Map((data.mods?.nodes ?? []).map(r => [`${r.gameId}:${r.modId}`, r.modRequirements]));
+                for (const node of chunk) {
+                    const found = byKey.get(`${node.gameId || node.game?.id}:${node.modId}`);
+                    if (found) node.modRequirements = found;
+                }
+            } catch (error) {
+                console.warn('[NexusModsApi] requirements not read:', error instanceof Error ? error.message : error);
+            }
+        }
+        return nodes;
     }
 
     public static async getModInfo(domain: string, modId: number): Promise<NexusModsV1Mod> {
