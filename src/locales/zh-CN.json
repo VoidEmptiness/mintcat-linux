@@ -1606,5 +1606,7 @@
 	"cols.approvalTip": "mod.io 审核状态：{{status}}",
 	"cols.who.host": "房主",
 	"cols.who.client": "客户端",
-	"cols.who.everyone": "所有人"
+	"cols.who.everyone": "所有人",
+	"cols.resizeTip": "拖动以调整此列宽度。双击以适应显示的内容。",
+	"cols.resetWidths": "重置列宽"
 }

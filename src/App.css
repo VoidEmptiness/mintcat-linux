@@ -846,24 +846,24 @@ body::before {
 }
 
 .mod-col-version {
-    width: 88px;
+    width: var(--mod-col-version-w, 88px);
 }
 
 .mod-col-version .ant-select {
-    max-width: 84px !important;
+    max-width: 100% !important;
     margin-right: 0 !important;
 }
 
 .mod-col-game {
-    width: 46px;
+    width: var(--mod-col-game-w, 46px);
 }
 
 .mod-col-status {
-    width: 96px;
+    width: var(--mod-col-status-w, 96px);
 }
 
 .mod-col-tags {
-    width: 150px;
+    width: var(--mod-col-tags-w, 150px);
     mask-image: linear-gradient(to right, #000 85%, transparent);
 }
 
@@ -909,4 +909,49 @@ body::before {
 
 .mod-list-header .mod-col {
     mask-image: none;
+}
+
+/* Column edges you can drag (columns view header) */
+.mod-list-header-col {
+    position: relative;
+    overflow: visible;
+}
+
+.mod-list-header-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-inline-start: 4px;
+}
+
+.mod-col-resizer {
+    position: absolute;
+    left: -5px;
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    cursor: col-resize;
+    z-index: 2;
+}
+
+.mod-col-resizer::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 4px;
+    bottom: 4px;
+    width: 1px;
+    background: var(--ant-color-border);
+}
+
+.mod-col-resizer:hover::after,
+.mod-col-resizing .mod-col-resizer::after {
+    background: var(--ant-color-primary);
+    width: 2px;
+}
+
+body.mod-col-resizing,
+body.mod-col-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
 }

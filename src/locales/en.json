@@ -1606,5 +1606,7 @@
     "cols.approvalTip": "mod.io review status: {{status}}",
     "cols.who.host": "Host",
     "cols.who.client": "Client",
-    "cols.who.everyone": "All"
+    "cols.who.everyone": "All",
+    "cols.resizeTip": "Drag to resize this column. Double-click to fit it to what's shown.",
+    "cols.resetWidths": "Reset column widths"
 }

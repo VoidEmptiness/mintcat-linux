@@ -8,7 +8,7 @@
  * Compact view: only the marks a mod has, right after its tags.
  */
 import React, {useSyncExternalStore} from "react";
-import {Tooltip} from "antd";
+import {Dropdown, Tooltip} from "antd";
 import {BellFilled, DislikeFilled, EyeFilled, FileTextFilled, LikeFilled} from "@ant-design/icons";
 import {t} from "i18next";
 import {ModNotes} from "@/services/ModNotes";
@@ -16,7 +16,7 @@ import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
 import {NEXUSMODS_PLATFORM} from "@/apis/nexusmods/types";
 import {ModSourceType} from "@/models/mod/types";
 import {editModNote} from "@/dialogs/ModNoteDialog";
-import {ModListAppearance} from "@/services/ModListAppearance";
+import {clampColumnWidth, columnWidth, ModListAppearance, type ModListColumn} from "@/services/ModListAppearance";
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
@@ -88,31 +88,103 @@ export function ModStatusIcons({nodeData}: { nodeData: any }) {
     );
 }
 
-/** Column titles over the list (columns view only) */
+/** Column titles over the list (columns view only); drag a column's left edge to resize it */
 export function ModListColumnsHeader() {
     const {notes, support, columns} = useFlagColumns();
     if (!columns) return null;
     const flagCells = (notes ? 1 : 0) + (support ? 2 : 0);
+    const title = (column: ModListColumn, label: string, tip: string) => (
+        <span className={`mod-col mod-col-${column} mod-list-header-col`}>
+            <ColumnResizer column={column}/>
+            <Tooltip title={tip} mouseEnterDelay={0.4}>
+                <span className="mod-list-header-label">{label}</span>
+            </Tooltip>
+        </span>
+    );
     return (
-        <div className="mod-list-header" role="row">
-            <span className="mod-list-header-name">{t('modList.colMod')}</span>
-            <Tooltip title={t('cols.versionHeaderTip')}>
-                <span className="mod-col mod-col-version">{t('cols.version')}</span>
-            </Tooltip>
-            <Tooltip title={t('cols.gameHeaderTip')}>
-                <span className="mod-col mod-col-game">{t('cols.game')}</span>
-            </Tooltip>
-            <Tooltip title={t('cols.statusHeaderTip')}>
-                <span className="mod-col mod-col-status">{t('cols.status')}</span>
-            </Tooltip>
-            <Tooltip title={t('cols.tagsHeaderTip')}>
-                <span className="mod-col mod-col-tags">{t('modList.colTags')}</span>
-            </Tooltip>
-            {flagCells > 0 && (
-                <Tooltip title={[notes ? t('modList.colNoteTip') : '', support ? t('modList.colSupportTip') : ''].filter(Boolean).join(' ')}>
-                    <span className="mod-list-header-flags" style={{width: flagCells * 20 - 2}}>{t('modList.colFlags')}</span>
-                </Tooltip>
-            )}
-        </div>
+        <Dropdown trigger={['contextMenu']}
+                  menu={{
+                      items: [{key: 'reset', label: t('cols.resetWidths')}],
+                      onClick: () => void ModListAppearance.resetColumnWidth(),
+                  }}>
+            <div className="mod-list-header" role="row">
+                <span className="mod-list-header-name">{t('modList.colMod')}</span>
+                {title('version', t('cols.version'), t('cols.versionHeaderTip'))}
+                {title('game', t('cols.game'), t('cols.gameHeaderTip'))}
+                {title('status', t('cols.status'), t('cols.statusHeaderTip'))}
+                {title('tags', t('modList.colTags'), t('cols.tagsHeaderTip'))}
+                {flagCells > 0 && (
+                    <Tooltip title={[notes ? t('modList.colNoteTip') : '', support ? t('modList.colSupportTip') : ''].filter(Boolean).join(' ')}>
+                        <span className="mod-list-header-flags" style={{width: flagCells * 20 - 2}}>{t('modList.colFlags')}</span>
+                    </Tooltip>
+                )}
+            </div>
+        </Dropdown>
+    );
+}
+
+/** How wide a column's content is in the rows on screen (double-click on its edge fits to it) */
+function contentWidth(column: ModListColumn): number | undefined {
+    let widest = 0;
+    document.querySelectorAll<HTMLElement>(`.ant-tree .mod-col-${column}`).forEach(cell => {
+        if (column === 'version') {
+            // the version picker's text is cut inside the select; measure the text itself
+            const text = cell.querySelector<HTMLElement>('.ant-select-content, .ant-select-selection-item');
+            if (text) widest = Math.max(widest, text.scrollWidth + 34);
+            else widest = Math.max(widest, cell.scrollWidth);
+        } else {
+            widest = Math.max(widest, cell.scrollWidth);
+        }
+    });
+    return widest > 0 ? widest + 6 : undefined;
+}
+
+/**
+ * The draggable edge at the left of a column title. Columns are lined up from the right, so
+ * dragging left makes the column wider (the mod names give up the room). Double-click: fit the
+ * column to what the rows on screen show.
+ */
+function ColumnResizer({column}: { column: ModListColumn }) {
+    const look = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version));
+    const onPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const handle = e.currentTarget;
+        handle.setPointerCapture(e.pointerId);
+        const startX = e.clientX;
+        const startWidth = columnWidth(look.columnWidths, column);
+        let width = startWidth;
+        document.body.classList.add('mod-col-resizing');
+        const move = (ev: PointerEvent) => {
+            width = clampColumnWidth(startWidth + (startX - ev.clientX));
+            ModListAppearance.previewColumnWidth(column, width);
+        };
+        const up = () => {
+            handle.removeEventListener('pointermove', move);
+            handle.removeEventListener('pointerup', up);
+            handle.removeEventListener('pointercancel', up);
+            document.body.classList.remove('mod-col-resizing');
+            if (width !== startWidth) void ModListAppearance.saveColumnWidth(column, width);
+        };
+        handle.addEventListener('pointermove', move);
+        handle.addEventListener('pointerup', up);
+        handle.addEventListener('pointercancel', up);
+    };
+    return (
+        <Tooltip title={t('cols.resizeTip')} mouseEnterDelay={0.8}>
+            <span className="mod-col-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t('cols.resizeTip')}
+                  onPointerDown={onPointerDown}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      const fit = contentWidth(column);
+                      if (fit) void ModListAppearance.saveColumnWidth(column, fit);
+                      else void ModListAppearance.resetColumnWidth(column);
+                  }}/>
+        </Tooltip>
     );
 }

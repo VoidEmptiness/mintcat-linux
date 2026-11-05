@@ -7,6 +7,43 @@ import {StorageAPI} from "@/storage";
 
 const SETTINGS_KEY = "ui.modListAppearance";
 
+/** Columns of the columns view whose width can be dragged */
+export type ModListColumn = 'version' | 'game' | 'status' | 'tags';
+
+export const COLUMN_DEFAULT_WIDTH: Record<ModListColumn, number> = {version: 88, game: 46, status: 96, tags: 150};
+export const COLUMN_MIN_WIDTH = 30;
+export const COLUMN_MAX_WIDTH = 600;
+
+export function clampColumnWidth(width: number): number {
+    return Math.round(Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, width)));
+}
+
+function cleanWidths(value: unknown): Partial<Record<ModListColumn, number>> {
+    const result: Partial<Record<ModListColumn, number>> = {};
+    if (!value || typeof value !== 'object') return result;
+    for (const key of Object.keys(COLUMN_DEFAULT_WIDTH) as ModListColumn[]) {
+        const n = Number((value as Record<string, unknown>)[key]);
+        if (Number.isFinite(n) && n > 0) result[key] = clampColumnWidth(n);
+    }
+    return result;
+}
+
+/** The width a column shows at (dragged or default) */
+export function columnWidth(widths: Partial<Record<ModListColumn, number>>, column: ModListColumn): number {
+    return widths[column] ?? COLUMN_DEFAULT_WIDTH[column];
+}
+
+/**
+ * Column widths are CSS variables on the page (`--mod-col-version-w`…), so dragging a column
+ * only changes a style and no row has to be drawn again.
+ */
+export function applyColumnWidths(widths: Partial<Record<ModListColumn, number>>): void {
+    if (typeof document === 'undefined') return;
+    for (const column of Object.keys(COLUMN_DEFAULT_WIDTH) as ModListColumn[]) {
+        document.documentElement.style.setProperty(`--mod-col-${column}-w`, `${columnWidth(widths, column)}px`);
+    }
+}
+
 export interface ModListLook {
     /** Color the names of local mods that were linked to a repository post automatically */
     autoLinkColorEnabled: boolean;
@@ -15,6 +52,8 @@ export interface ModListLook {
     linkIcons: boolean;
     /** Columns view: a header over the list, tags and flags (note, endorsed/liked, tracked/subscribed) in aligned columns */
     columns: boolean;
+    /** Widths you dragged the columns to (px); missing ones use their default */
+    columnWidths: Partial<Record<ModListColumn, number>>;
     /** Folder key ("folder-12") → color */
     folderColors: Record<string, string>;
 }
@@ -33,6 +72,7 @@ let look: ModListLook = {
     autoLinkColor: DEFAULT_AUTO_LINK_COLOR,
     linkIcons: false,
     columns: true,
+    columnWidths: {},
     folderColors: {},
 };
 let version = 0;
@@ -90,8 +130,10 @@ export const ModListAppearance = {
                 autoLinkColor: isColor(parsed.autoLinkColor) ? parsed.autoLinkColor : DEFAULT_AUTO_LINK_COLOR,
                 linkIcons: parsed.linkIcons === true,
                 columns: parsed.columns !== false,
+                columnWidths: cleanWidths(parsed.columnWidths),
                 folderColors,
             };
+            applyColumnWidths(look.columnWidths);
             notify();
         } catch (e) {
             console.warn("[ModListAppearance] could not load", e);
@@ -105,8 +147,25 @@ export const ModListAppearance = {
 
     async update(changes: Partial<Omit<ModListLook, "folderColors">>): Promise<void> {
         look = {...look, ...changes};
+        if (changes.columnWidths) applyColumnWidths(look.columnWidths);
         notify();
         await persist();
+    },
+
+    /** While dragging: shown at once, saved by saveColumnWidth when the drag ends */
+    previewColumnWidth(column: ModListColumn, width: number): void {
+        applyColumnWidths({...look.columnWidths, [column]: clampColumnWidth(width)});
+    },
+
+    async saveColumnWidth(column: ModListColumn, width: number): Promise<void> {
+        await ModListAppearance.update({columnWidths: {...look.columnWidths, [column]: clampColumnWidth(width)}});
+    },
+
+    /** Back to the default width (or all columns when none is given) */
+    async resetColumnWidth(column?: ModListColumn): Promise<void> {
+        const widths = {...look.columnWidths};
+        if (column) delete widths[column];
+        await ModListAppearance.update({columnWidths: column ? widths : {}});
     },
 
     folderColor(folderKey: string, _version: number): string | undefined {
