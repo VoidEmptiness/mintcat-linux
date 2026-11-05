@@ -197,6 +197,22 @@ export function analyzePostText(text: string): PostAnalysis {
     return {notes, requirements, orderHints};
 }
 
+// ---------- who has to have it ----------
+
+export type WhoNeedsIt = 'host' | 'client' | 'everyone';
+
+/** "Host only." / "client side" / "Required by all": who has to have the mod, from the author's sentences */
+export function whoNeedsIt(notes: string[]): { who: WhoNeedsIt; sentence: string } | undefined {
+    for (const sentence of notes) {
+        if (/\bhost[ -]?only\b|\bonly (the )?host\b/i.test(sentence)) return {who: 'host', sentence};
+        if (/\bclient[ -]?(side|only)\b|\bonly (the )?clients?\b/i.test(sentence)) return {who: 'client', sentence};
+        if (/\brequired by (all|everyone)\b|\b(everyone|all players) (needs?|must have)\b|\bneeds? to be installed by (all|everyone)\b/i.test(sentence)) {
+            return {who: 'everyone', sentence};
+        }
+    }
+    return undefined;
+}
+
 // ---------- matching names to the mods in a list ----------
 
 /** "Customizable Ally Outlines" → "cao", "Custom Difficulty 2" → "cd2", "Unified UI" → "uui" */

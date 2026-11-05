@@ -1590,5 +1590,21 @@
     "log.legacyOnlyFullLog": "Builds before this one kept everything in one big log file. Click Full log to open it.",
     "req.hostOnly": "Host only",
     "req.clientSide": "Client side",
-    "req.everyone": "Everyone needs it"
+    "req.everyone": "Everyone needs it",
+    "cols.version": "Version",
+    "cols.game": "Game",
+    "cols.status": "Status",
+    "cols.versionHeaderTip": "The mod's own version (pick another one here). Pak Hub mods: the date of the upload you have.",
+    "cols.gameHeaderTip": "mod.io only: the game version the mod is tagged for. Orange when it's older than the newest one among your mod.io mods. Nexus Mods, ModCat and Pak Hub don't record this.",
+    "cols.statusHeaderTip": "mod.io's review status (Verified, Approved, Sandbox), and who has to have the mod: everyone in the lobby (mod.io's RequiredByAll), or what a Pak Hub post says (host only, client side, everyone).",
+    "cols.tagsHeaderTip": "mod.io tags, ModCat types, or the mod's Nexus category.",
+    "cols.requiredByAllTip": "mod.io marks it RequiredByAll: everyone in the lobby needs it.",
+    "cols.postSaysTip": "The Pak Hub post says: “{{sentence}}”",
+    "cols.uploadedTip": "Pak Hub upload you have: {{file}}, posted {{date}}",
+    "cols.gameTip": "Tagged on mod.io for game version {{version}}",
+    "cols.gameOlderTip": "Tagged on mod.io for game version {{version}}; the newest among your mod.io mods is {{latest}}. It may still work.",
+    "cols.approvalTip": "mod.io review status: {{status}}",
+    "cols.who.host": "Host",
+    "cols.who.client": "Client",
+    "cols.who.everyone": "All"
 }

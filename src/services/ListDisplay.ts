@@ -91,3 +91,46 @@ export const ListDisplayOptions = {
 export function useShowLocalPaths(): boolean {
     return useSyncExternalStore(displaySignal.subscribe, () => showLocalPaths);
 }
+
+// ---------- newest game version among the list's mod.io mods ----------
+
+const gameVersionSignal = createSignal();
+let latestGameVersion: string | undefined;
+
+/** "1.39" < "1.40" < "1.40.1" (numbers compared part by part) */
+export function compareGameVersions(a: string, b: string): number {
+    const pa = a.replace(/^v/i, "").split(".").map(Number);
+    const pb = b.replace(/^v/i, "").split(".").map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
+}
+
+/** The newest of these versions (undefined for none) */
+export function newestGameVersion(versions: string[]): string | undefined {
+    let newest: string | undefined;
+    for (const v of versions) {
+        if (!/^v?\d+(\.\d+)+$/i.test(v.trim())) continue;
+        if (!newest || compareGameVersions(v.trim(), newest) > 0) newest = v.trim();
+    }
+    return newest;
+}
+
+/**
+ * mod.io tags Deep Rock mods with the game versions they're made for. The newest of those among
+ * your mod.io mods counts as the current game version (instead of a number written into the app).
+ */
+export const GameVersions = {
+    setLatest(value: string | undefined) {
+        if (value === latestGameVersion) return;
+        latestGameVersion = value;
+        gameVersionSignal.notify();
+    },
+    latest(_version?: number): string | undefined {
+        return latestGameVersion;
+    },
+    subscribe: gameVersionSignal.subscribe,
+    version: gameVersionSignal.version,
+};

@@ -86,7 +86,9 @@ import { isUe4ssEnabled } from "@/utils/Ue4ssSetting";
 import { perfMark, perfUntilPainted } from "@/utils/perfTrace";
 import { fileNameOf, findMovedSiblings, localModPath, parentDir, relocateLocalMod } from "@/services/LocalModRelocation";
 import { ModSupport } from "@/services/ModSupport";
+import { GameVersions, newestGameVersion } from "@/services/ListDisplay";
 import { ModListColumnsHeader } from "./ModStatusIcons";
+import { backfillNexusCategories } from "@/services/NexusCategories";
 
 
 type DeployState = "deployed" | "pending" | "uninstalled" | "notDeployed" | "missing";
@@ -960,6 +962,11 @@ export class HomePage extends BasePage<any, ModListPageState> {
         resetExpandedKeys: boolean = false
     ) {
         this.lastTreeSignature = "";
+        // the newest game version mod.io mods are tagged for (older ones are marked)
+        GameVersions.setLatest(newestGameVersion(allMods
+            .filter(m => m.sourceType === ModSourceType.Modio)
+            .flatMap(m => m.version?.availableVersions ?? [])));
+
         // TreeViewConverter now accepts CompleteModData[] and ProfileModData[]
         const converter = new TreeViewConverter(allMods, profileMods);
         converter.convertToFromRoot(activeRoot);
@@ -2115,6 +2122,11 @@ export class HomePage extends BasePage<any, ModListPageState> {
         this.updateProfileSelect().then();
         this.updateTreeView().then();
         this.updateCountLabel().then();
+
+        // Nexus mods added before categories were read get theirs (shown as the tag)
+        backfillNexusCategories()
+            .then((filled) => filled > 0 && this.updateTreeView())
+            .catch(e => console.warn('[HomePage] Nexus categories not filled in', e));
 
         // Check for mod updates
         ModUpdateService.checkModList((loading) => {

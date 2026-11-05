@@ -1590,5 +1590,21 @@
 	"log.legacyOnlyFullLog": "之前的版本把所有内容保存在一个大日志文件中。点击“完整日志”打开。",
 	"req.hostOnly": "仅房主",
 	"req.clientSide": "客户端",
-	"req.everyone": "所有人都需要"
+	"req.everyone": "所有人都需要",
+	"cols.version": "版本",
+	"cols.game": "游戏",
+	"cols.status": "状态",
+	"cols.versionHeaderTip": "模组自身的版本（可在此选择其他版本）。Pak Hub 模组：你拥有的上传日期。",
+	"cols.gameHeaderTip": "仅 mod.io：模组标注的游戏版本。比你的 mod.io 模组中最新的版本旧时显示为橙色。Nexus Mods、ModCat 和 Pak Hub 不记录此信息。",
+	"cols.statusHeaderTip": "mod.io 的审核状态（Verified、Approved、Sandbox），以及谁需要安装：房间里所有人（mod.io 的 RequiredByAll），或 Pak Hub 帖子所说的（仅房主、客户端、所有人）。",
+	"cols.tagsHeaderTip": "mod.io 标签、ModCat 类型，或模组的 Nexus 分类。",
+	"cols.requiredByAllTip": "mod.io 标记为 RequiredByAll：房间里所有人都需要。",
+	"cols.postSaysTip": "Pak Hub 帖子写道：“{{sentence}}”",
+	"cols.uploadedTip": "你拥有的 Pak Hub 上传：{{file}}，发布于 {{date}}",
+	"cols.gameTip": "在 mod.io 上标注为游戏版本 {{version}}",
+	"cols.gameOlderTip": "在 mod.io 上标注为游戏版本 {{version}}；你的 mod.io 模组中最新的是 {{latest}}。它可能仍然可用。",
+	"cols.approvalTip": "mod.io 审核状态：{{status}}",
+	"cols.who.host": "房主",
+	"cols.who.client": "客户端",
+	"cols.who.everyone": "所有人"
 }

@@ -133,6 +133,8 @@ export interface NexusModsResolvedMod {
     mod: NexusModsV1Mod;
     file?: NexusModsFile;
     sourceUrl?: string;
+    /** The mod's Nexus category, when it could be read */
+    category?: string;
 }
 
 /** The account behind the API key (from /v1/users/validate.json) */

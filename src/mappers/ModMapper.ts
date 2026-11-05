@@ -152,7 +152,8 @@ export class ModMapper {
             originalName: modName,
             url: NexusModsApi.getModUrl(domain, modId),
             sourceType: NEXUSMODS_PLATFORM,
-            tags: [],
+            // Nexus has categories, not mod.io-style tags; its category is the tag
+            tags: resolved.category ? [resolved.category] : [],
             approvalStatus: ModApprovalStatus.Approved,
             version: {
                 modId: 0,

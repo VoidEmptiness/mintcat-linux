@@ -11,8 +11,12 @@ import type {SearchResultItem} from "@/apis/search";
 import type {RepositoryModDetail} from "@/apis/repositories";
 import type {ListedIndex} from "@/services/ListedMods";
 import {planFor, type RequirementPlan, type ResolvedOrderHint, type ResolvedRequirement} from "@/services/BrowseRequirements";
+import {whoNeedsIt} from "@/services/ModRequirements";
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
+/** Labels for who has to have a mod */
+export const WHO_LABEL = {host: 'req.hostOnly', client: 'req.clientSide', everyone: 'req.everyone'} as const;
 
 export function useRequirementPlan(item: SearchResultItem, index: ListedIndex, detail?: RepositoryModDetail): RequirementPlan | null {
     const [plan, setPlan] = useState<RequirementPlan | null>(null);
@@ -79,18 +83,6 @@ function RequirementTag({req}: { req: ResolvedRequirement }) {
     );
 }
 
-/** "Host only." / "client side" / "Required by all": who has to have the mod */
-export function whoNeedsIt(notes: string[]): { key: string; sentence: string } | undefined {
-    for (const sentence of notes) {
-        if (/\bhost[ -]?only\b|\bonly (the )?host\b|\bonly host\b/i.test(sentence)) return {key: 'req.hostOnly', sentence};
-        if (/\bclient[ -]?(side|only)\b|\bonly (the )?clients?\b/i.test(sentence)) return {key: 'req.clientSide', sentence};
-        if (/\brequired by (all|everyone)\b|\b(everyone|all players) (needs?|must have)\b|\bneeds? to be installed by (all|everyone)\b/i.test(sentence)) {
-            return {key: 'req.everyone', sentence};
-        }
-    }
-    return undefined;
-}
-
 export function orderHintText(hint: ResolvedOrderHint): string {
     const target = hint.match ?? hint.target;
     return hint.direction === 'above' ? t('req.loadAbove', {name: target}) : t('req.loadBelow', {name: target});
@@ -119,7 +111,7 @@ export function CardRequirements({plan}: { plan: RequirementPlan | null }) {
             ))}
             {who && (
                 <Tooltip title={`“${who.sentence}”`}>
-                    <Tag icon={<TeamOutlined/>}>{t(who.key)}</Tag>
+                    <Tag icon={<TeamOutlined/>}>{t(WHO_LABEL[who.who])}</Tag>
                 </Tooltip>
             )}
             {conflicts.length > 0 && (

@@ -96,7 +96,18 @@ export function ModListColumnsHeader() {
     return (
         <div className="mod-list-header" role="row">
             <span className="mod-list-header-name">{t('modList.colMod')}</span>
-            <span className="mod-list-header-tags">{t('modList.colTags')}</span>
+            <Tooltip title={t('cols.versionHeaderTip')}>
+                <span className="mod-col mod-col-version">{t('cols.version')}</span>
+            </Tooltip>
+            <Tooltip title={t('cols.gameHeaderTip')}>
+                <span className="mod-col mod-col-game">{t('cols.game')}</span>
+            </Tooltip>
+            <Tooltip title={t('cols.statusHeaderTip')}>
+                <span className="mod-col mod-col-status">{t('cols.status')}</span>
+            </Tooltip>
+            <Tooltip title={t('cols.tagsHeaderTip')}>
+                <span className="mod-col mod-col-tags">{t('modList.colTags')}</span>
+            </Tooltip>
             {flagCells > 0 && (
                 <Tooltip title={[notes ? t('modList.colNoteTip') : '', support ? t('modList.colSupportTip') : ''].filter(Boolean).join(' ')}>
                     <span className="mod-list-header-flags" style={{width: flagCells * 20 - 2}}>{t('modList.colFlags')}</span>

@@ -54,6 +54,7 @@ import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
 import {editModNote, removeModNote} from "@/dialogs/ModNoteDialog";
 import {handleSupportMenu, supportMenuItems} from "@/components/SupportButtons";
 import {ModStatusIcons} from "./ModStatusIcons";
+import {GameTag, StatusTags, TagList, UploadedDate, useRowInfo} from "./ModInfoColumns";
 
 const {useToken} = theme;
 
@@ -1434,6 +1435,7 @@ function TreeViewItemInner({
     const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
     const supportVersion = useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
     const columnsView = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version)).columns;
+
     const hasNote = !!ModNotes.get(nodeData.modId, notesVersion);
     const supportKind = nodeData.platformId
         ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
@@ -1441,6 +1443,8 @@ function TreeViewItemInner({
         : undefined;
     const nexusDomain = supportKind === 'nexus' ? nexusDomainOf(nodeData.url) : '';
     const repoLink = RepositoryUpdates.linkForModAt(nodeData, repoLinkVersion);
+    // version / game version / status / tags (see ModInfoColumns)
+    const rowInfo = useRowInfo(nodeData, repoLink);
 
     const [enabled, setEnabled] = useState(() =>
         getPendingEnabled(nodeData.modId, nodeData.enabled)
@@ -1507,25 +1511,8 @@ function TreeViewItemInner({
 
     if (nodeData.isLeaf) {
         const hasProgress = nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM;
-        const versionTag = nodeData.versions.length > 0 && nodeData.versions[0] !== "1.40" ? nodeData.versions[0] : undefined;
-        const approval = nodeData.approval === "Verified" ? {color: "blue", short: "V", title: t("Verified")}
-            : nodeData.approval === "Approved" ? {color: "green", short: "A", title: t("Approved")}
-                : nodeData.approval === "Sandbox" ? {color: "orange", short: "S", title: t("Sandbox")} : undefined;
-        const tagTitles: string[] = [...nodeData.tags,
-            ...(nodeData.required === true ? ["RequiredByAll"] : []),
-            ...(versionTag ? [versionTag] : []),
-            ...(approval ? [approval.title] : [])];
-        const tagElements = (
-            <>
-                {nodeData.tags.map((tagName: string) => (
-                    <Tag key={tagName}>{tagName}</Tag>
-                ))}
-                {nodeData.required === true && (
-                    <Tag color="orange">RequiredByAll</Tag>)}
-                {versionTag && <Tag color="red">{versionTag}</Tag>}
-                {approval && <Tag color={approval.color} title={approval.title}>{approval.short}</Tag>}
-            </>
-        );
+        const hasVersions = hasProgress;
+        const tagTitles = rowInfo.tags;
         return (
             <Dropdown trigger={['contextMenu']}
                       menu={{
@@ -1558,9 +1545,8 @@ function TreeViewItemInner({
 
                     <ModTreeViewSwitch nodeData={nodeData} onCountLabelUpdate={onCountLabelUpdate}/>
 
-                    {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
-                        <ModTreeViewVersionSelect nodeData={nodeData}/>
-                    }
+                    {/* columns view: the version picker sits in the Version column instead */}
+                    {!columnsView && hasVersions && <ModTreeViewVersionSelect nodeData={nodeData}/>}
 
                     {
                         (nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
@@ -1586,13 +1572,26 @@ function TreeViewItemInner({
 
                     {/* 右侧区域：tags 靠右 (columns view: tags and flags in fixed-width columns) */}
                     <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-                        {columnsView && hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
-                        {columnsView
-                            ? <Tooltip title={tagTitles.length > 0 ? tagTitles.join(" · ") : undefined} mouseEnterDelay={0.5}>
-                                <span className="mod-col-tags">{tagElements}</span>
-                            </Tooltip>
-                            : tagElements}
-                        {!columnsView && hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                        {columnsView ? (
+                            <>
+                                {hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                                <span className="mod-col mod-col-version">
+                                    {hasVersions ? <ModTreeViewVersionSelect nodeData={nodeData}/> : <UploadedDate info={rowInfo}/>}
+                                </span>
+                                <span className="mod-col mod-col-game"><GameTag info={rowInfo}/></span>
+                                <span className="mod-col mod-col-status"><StatusTags info={rowInfo}/></span>
+                                <Tooltip title={tagTitles.length > 1 ? tagTitles.join(" · ") : undefined} mouseEnterDelay={0.5}>
+                                    <span className="mod-col mod-col-tags"><TagList info={rowInfo}/></span>
+                                </Tooltip>
+                            </>
+                        ) : (
+                            <>
+                                <TagList info={rowInfo}/>
+                                <StatusTags info={rowInfo} compact/>
+                                <GameTag info={rowInfo} compact/>
+                                {hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                            </>
+                        )}
 
                         <ModStatusIcons nodeData={nodeData}/>
                     </span>

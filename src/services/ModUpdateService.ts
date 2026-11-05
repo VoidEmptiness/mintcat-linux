@@ -579,7 +579,8 @@ export class ModUpdateService {
             originalName: dto.originalName || mod.originalName,
             url: dto.url,
             sourceType: dto.sourceType,
-            tags: dto.tags,
+            // the category when Nexus gave it (a failed lookup keeps the one saved)
+            ...(dto.tags?.length ? {tags: dto.tags} : {}),
             approvalStatus: dto.approvalStatus,
         });
 

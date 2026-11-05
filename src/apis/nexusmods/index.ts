@@ -85,6 +85,10 @@ export class NexusModsEndorseError extends Error {
     }
 }
 
+/** Mod categories and game ids from Nexus, for the session */
+const categoryCache = new Map<string, string | undefined>();
+const gameIds = new Map<string, number>();
+
 /** How long an account check is reused (premium can change, but not by the minute) */
 const ACCOUNT_CHECK_TTL_MS = 10 * 60_000;
 let accountCheck: { key: string; at: number; account: NexusModsAccount | null } | null = null;
@@ -493,7 +497,40 @@ export class NexusModsApi {
             mod,
             file,
             sourceUrl: url,
+            category: await NexusModsApi.getModCategory(parsed.domain, parsed.modId),
         };
+    }
+
+    /**
+     * The mod's category on Nexus ("User Interface", "Audio"…), shown as its tag. From the
+     * public GraphQL API (no key needed); undefined when Nexus can't be asked.
+     */
+    public static async getModCategory(domain: string, modId: number): Promise<string | undefined> {
+        const key = `${domain}:${modId}`;
+        if (categoryCache.has(key)) return categoryCache.get(key);
+        try {
+            const gameId = await NexusModsApi.getGameIdForDomain(domain);
+            if (!gameId) return undefined;
+            const data = await NexusModsApi.graphql<{ mods?: { nodes?: { modCategory?: { name?: string } | null }[] } }>(
+                `query ModCategory($filter: ModsFilter) { mods(filter: $filter, count: 1) { nodes { modCategory { name } } } }`,
+                {filter: {gameId: [{value: String(gameId), op: 'EQUALS'}], modId: [{value: String(modId), op: 'EQUALS'}]}});
+            const name = data.mods?.nodes?.[0]?.modCategory?.name?.trim() || undefined;
+            categoryCache.set(key, name);
+            return name;
+        } catch (error) {
+            console.warn('[NexusModsApi] category not read:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
+    }
+
+    /** Nexus's game id for a domain ("deeprockgalactic" → 3671), cached */
+    private static async getGameIdForDomain(domain: string): Promise<number | undefined> {
+        if (gameIds.has(domain)) return gameIds.get(domain);
+        const data = await NexusModsApi.graphql<{ game?: { id?: number } | null }>(
+            `query GameId($domainName: String!) { game(domainName: $domainName) { id } }`, {domainName: domain});
+        const id = Number(data.game?.id) || undefined;
+        if (id) gameIds.set(domain, id);
+        return id;
     }
 
     public static async refreshResolvedMod(mod: CompleteModData): Promise<NexusModsResolvedMod | null> {

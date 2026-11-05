@@ -835,15 +835,35 @@ body::before {
     margin-inline-start: 2px;
 }
 
-/* Columns view: tags in a fixed column, header over the list */
-.mod-col-tags {
-    width: 180px;
+/* Columns view: version, game version, status and tags in fixed columns, header over the list */
+.mod-col {
     flex: none;
     display: flex;
     align-items: center;
     gap: 4px;
     overflow: hidden;
     white-space: nowrap;
+}
+
+.mod-col-version {
+    width: 88px;
+}
+
+.mod-col-version .ant-select {
+    max-width: 84px !important;
+    margin-right: 0 !important;
+}
+
+.mod-col-game {
+    width: 46px;
+}
+
+.mod-col-status {
+    width: 96px;
+}
+
+.mod-col-tags {
+    width: 150px;
     mask-image: linear-gradient(to right, #000 85%, transparent);
 }
 
@@ -851,9 +871,16 @@ body::before {
     mask-image: none;
 }
 
-.mod-col-tags .ant-tag {
+.mod-col .ant-tag,
+.mod-col-tag {
     margin-inline-end: 0;
     flex: none;
+}
+
+.mod-col-date {
+    font-size: 12px;
+    color: var(--ant-color-text-secondary);
+    padding-inline-start: 4px;
 }
 
 .mod-list-header {
@@ -873,14 +900,13 @@ body::before {
     padding-inline-start: 8px;
 }
 
-.mod-list-header-tags {
-    width: 180px;
-    flex: none;
-}
-
 .mod-list-header-flags {
     flex: none;
     text-align: center;
     white-space: nowrap;
     overflow: hidden;
+}
+
+.mod-list-header .mod-col {
+    mask-image: none;
 }
