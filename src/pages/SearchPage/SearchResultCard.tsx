@@ -1,14 +1,23 @@
 import React, {memo, useCallback, useState} from 'react';
-import {Avatar, Button, Dropdown, Space, Skeleton} from 'antd';
-import {CalendarOutlined, DownloadOutlined, FileOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
+import {Avatar, Button, Dropdown, Space, Skeleton, Tag, Tooltip} from 'antd';
+import {CalendarOutlined, CheckCircleFilled, DownloadOutlined, FileOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
+import type {ListedIndex, ListedState} from '@/services/ListedMods';
+import {CardRequirements, useRequirementPlan} from './CardRequirements';
+import {ModioSupportButtons, NexusSupportButtons} from '@/components/SupportButtons';
+import {nexusDomainOf} from '@/services/ModSupport';
+import type {NexusModsModNode} from '@/apis/nexusmods/types';
 import {t} from 'i18next';
 import {open} from '@tauri-apps/plugin-shell';
 import type {MenuProps} from 'antd';
-import {SearchResultItem, isRepositorySource, type RepositoryResultData} from '@/apis/search';
+import {SearchResultItem, SearchSource, isRepositorySource, type RepositoryResultData} from '@/apis/search';
 import {repositoryDescription, repositoryTitleFromFiles, useRepositoryDetail} from '@/apis/repositories/details';
 
 interface SearchResultCardProps {
     item: SearchResultItem;
+    /** In your lists already (undefined: not, or not known) */
+    listed?: ListedState;
+    /** Your lists, to mark requirements that are in them */
+    index: ListedIndex;
     onAdd: (item: SearchResultItem) => void;
     onTranslate: (itemId: string) => void;
     onRestore: (itemId: string) => void;
@@ -20,6 +29,8 @@ interface SearchResultCardProps {
  */
 export const SearchResultCard = memo<SearchResultCardProps>(({
     item,
+    listed,
+    index,
     onAdd,
     onTranslate,
     onRestore,
@@ -73,6 +84,7 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
     const repoDetail = useRepositoryDetail(repoData?.baseUrl, repoData?.slug);
     const repoTitle = repositoryTitleFromFiles(repoDetail);
     const repoText = repositoryDescription(repoDetail);
+    const plan = useRequirementPlan(item, index, repoDetail);
 
     // 显示的名称和摘要
     const displayName = item.nameTrans || repoTitle || item.name;
@@ -127,18 +139,23 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                             <a onClick={handleTitleClick} className="search-result-card-name">
                                 {displayName}
                             </a>
-                            <Button
-                                type="text"
-                                size="small"
-                                icon={<PlusCircleOutlined />}
-                                onClick={handleAddClick}
-                                className="search-result-card-add-btn"
-                            />
+                            <Tooltip title={listed?.inActiveProfile ? t('browse.addAgainTip') : t('browse.addTip')}>
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<PlusCircleOutlined />}
+                                    onClick={handleAddClick}
+                                    className="search-result-card-add-btn"
+                                />
+                            </Tooltip>
+                            <ListedTag listed={listed}/>
                         </div>
 
                         <div className="search-result-card-description">
                             {displaySummary}
                         </div>
+
+                        <CardRequirements plan={plan}/>
 
                         <div className="search-result-card-stats">
                             <Space size="middle">
@@ -174,6 +191,15 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                                     </span>
                                 )}
                             </Space>
+                            {item.source === SearchSource.NEXUSMODS && item.platformId && (
+                                <NexusSupportButtons domain={nexusDomainOf(item.profileUrl)}
+                                                     modId={item.platformId}
+                                                     name={displayName}
+                                                     modVersion={(item.rawData as NexusModsModNode | undefined)?.version}/>
+                            )}
+                            {item.source === SearchSource.MODIO && item.platformId && (
+                                <ModioSupportButtons modId={item.platformId} name={displayName}/>
+                            )}
                         </div>
                     </div>
 
@@ -214,6 +240,30 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
 });
 
 SearchResultCard.displayName = 'SearchResultCard';
+
+/** "In your list · Folder" (green) or "In profile X" (blue) next to the title */
+function ListedTag({listed}: { listed?: ListedState }) {
+    if (!listed) return null;
+    if (listed.inActiveProfile) {
+        const others = listed.otherProfiles.length > 0 ? ` ${t('browse.alsoIn', {names: listed.otherProfiles.join(', ')})}` : '';
+        return (
+            <Tooltip title={(listed.folder ? t('browse.inYourListFolderTip', {folder: listed.folder}) : t('browse.inYourListTip')) + others}>
+                <Tag color="success" icon={<CheckCircleFilled/>} className="search-result-card-listed">
+                    {listed.folder ? t('browse.inYourListFolder', {folder: listed.folder.split(' / ').pop()}) : t('browse.inYourList')}
+                </Tag>
+            </Tooltip>
+        );
+    }
+    return (
+        <Tooltip title={t('browse.inOtherProfilesTip', {names: listed.otherProfiles.join(', ')})}>
+            <Tag color="processing" className="search-result-card-listed">
+                {listed.otherProfiles.length === 1
+                    ? t('browse.inProfile', {name: listed.otherProfiles[0]})
+                    : t('browse.inProfiles', {count: listed.otherProfiles.length})}
+            </Tag>
+        </Tooltip>
+    );
+}
 
 /**
  * 格式化数字（如 1234 -> 1.2K）

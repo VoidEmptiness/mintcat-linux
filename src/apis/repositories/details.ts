@@ -3,7 +3,7 @@
  * card with a small number of requests at a time and cached for the session.
  */
 import {useEffect, useState} from "react";
-import {RepositoryApi, type ModRepository, type RepositoryModDetail} from "./index";
+import {RepositoryApi, type ModRepository, type RepositoryModDetail, type RepositoryModSummary} from "./index";
 
 const MAX_PARALLEL = 4;
 const pending = new Map<string, Promise<RepositoryModDetail>>();
@@ -84,4 +84,62 @@ export function repositoryTitleFromFiles(detail: RepositoryModDetail | undefined
 export function repositoryDescription(detail: RepositoryModDetail | undefined): string | undefined {
     const text = detail?.content?.replace(/\s+/g, " ").trim();
     return text || undefined;
+}
+
+// ---------- finding a post from its Discord message ----------
+
+/**
+ * Pak Hub post slugs end with the Discord message id in base 36
+ * ("egg-and-caretaker-desync-fixer-bwhxa3mmu7qo" ← message 1566656219777867952), so a Discord
+ * link in a post can be matched to the post taken from that message. The repository's list is
+ * read once per session for this (48 posts a page, up to 25 pages).
+ */
+export function messageIdSuffix(messageId: string): string {
+    try {
+        return BigInt(messageId).toString(36);
+    } catch {
+        return "";
+    }
+}
+
+export function slugSuffix(slug: string): string {
+    return slug.split("-").pop()?.toLowerCase() ?? "";
+}
+
+const MAX_INDEX_PAGES = 25;
+const postIndexes = new Map<string, Promise<Map<string, RepositoryModSummary>>>();
+
+function postIndex(baseUrl: string): Promise<Map<string, RepositoryModSummary>> {
+    const existing = postIndexes.get(baseUrl);
+    if (existing) return existing;
+    const promise = (async () => {
+        const repo = {baseUrl} as ModRepository;
+        const index = new Map<string, RepositoryModSummary>();
+        for (let page = 1; page <= MAX_INDEX_PAGES; page++) {
+            const list = await runLimited(() => RepositoryApi.listMods(repo, {page, sort: 'newest'}));
+            for (const mod of list.mods) index.set(slugSuffix(mod.slug), mod);
+            if (list.mods.length === 0 || page * (list.pageSize || 48) >= list.total) break;
+        }
+        return index;
+    })();
+    postIndexes.set(baseUrl, promise);
+    promise.catch(() => postIndexes.delete(baseUrl));
+    return promise;
+}
+
+/** The posts of this repository taken from these Discord messages (message id → post) */
+export async function findPostsByMessageIds(baseUrl: string, messageIds: string[]): Promise<Map<string, RepositoryModSummary>> {
+    const result = new Map<string, RepositoryModSummary>();
+    if (messageIds.length === 0) return result;
+    const index = await postIndex(baseUrl);
+    for (const id of messageIds) {
+        const post = index.get(messageIdSuffix(id));
+        if (post) result.set(id, post);
+    }
+    return result;
+}
+
+/** Already loaded post details (no request) */
+export function loadedRepositoryDetail(baseUrl: string, slug: string): RepositoryModDetail | undefined {
+    return loaded.get(keyOf(baseUrl, slug));
 }

@@ -167,12 +167,12 @@ async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], fo
     };
 }
 
-export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
+export async function addRepositoryMod(item: SearchResultItem): Promise<boolean> {
     const raw = item.rawData as RepositoryResultData | undefined;
     const repo = raw ? await RepositoryStore.get(raw.repositoryId) : undefined;
     if (!raw || !repo) {
         message.error(t("repo.notFound"));
-        return;
+        return false;
     }
 
     let detail;
@@ -181,14 +181,14 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
     } catch (error) {
         await logActivity('error', t("repo.loadPostFailed", {name: item.name, reason: String(error)}), item.profileUrl, 'repository');
         message.error(t("repo.loadPostFailed", {name: item.name, reason: String(error)}));
-        return;
+        return false;
     }
 
     const files = detail.files.filter(f => safeModFileName(f.filename));
     if (files.length === 0) {
         await logActivity('error', t("repo.noModFiles", {name: item.name}), item.profileUrl, 'repository');
         message.error(t("repo.noModFiles", {name: item.name}));
-        return;
+        return false;
     }
 
     let folders: FolderOption[] = [];
@@ -203,7 +203,7 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
     const title = files.filter(f => f.latest).map(f => f.filename).join(", ") || item.name;
     const choice = await chooseFilesAndFolder(title, files, folders);
     if (!choice || choice.files.length === 0) {
-        return;
+        return false;
     }
     const chosen = choice.files;
     let folderName = folders.find(f => f.id === choice.folderId)?.name ?? "";
@@ -218,7 +218,7 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
             const reason = error instanceof Error ? error.message : String(error);
             await logActivity('error', t("newFolder.failed", {reason}), choice.newFolder.name, 'repository');
             message.error(t("newFolder.failed", {reason}));
-            return;
+            return false;
         }
     }
 
@@ -255,7 +255,7 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
         }
     }
 
-    if (downloaded.length === 0) return;
+    if (downloaded.length === 0) return false;
 
     // Straight into the mod list (no extra Add Mod window to confirm)
     const homeService = new HomeService();
@@ -285,4 +285,5 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
         message.info(t("Mod Already Exists"));
     }
     await emitVoidEvent('mods-added');
+    return true;
 }

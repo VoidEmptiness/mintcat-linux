@@ -85,6 +85,7 @@ import { getInternalAssetPaths, type InternalAssetGame } from "@/services/Intern
 import { isUe4ssEnabled } from "@/utils/Ue4ssSetting";
 import { perfMark, perfUntilPainted } from "@/utils/perfTrace";
 import { fileNameOf, findMovedSiblings, localModPath, parentDir, relocateLocalMod } from "@/services/LocalModRelocation";
+import { ModSupport } from "@/services/ModSupport";
 
 
 type DeployState = "deployed" | "pending" | "uninstalled" | "notDeployed" | "missing";
@@ -2012,6 +2013,8 @@ export class HomePage extends BasePage<any, ModListPageState> {
         }
         // settings left by profiles deleted with older versions
         void removeProfileLeftovers().catch(e => console.warn('[profiles] leftover cleanup failed', e));
+        // what your Nexus / mod.io accounts track, endorsed, subscribed to and rated (for the icons)
+        void ModSupport.refresh().catch(e => console.warn('[support] lists not read', e));
 
         // Pre-initialize UI ViewModels (optional but recommended for better UX)
         await IoC.get(TreeViewModel);

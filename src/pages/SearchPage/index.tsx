@@ -39,6 +39,12 @@ import {openWindow} from '@/dialogs/AddModDialog/open';
 import {NexusModsApi} from '@/apis/nexusmods';
 import {captureNexusDownloadUrl, isNexusDownloadWindowClosed} from '@/apis/nexusmods/downloadWebview';
 import type {NexusModsModNode} from '@/apis/nexusmods/types';
+import {buildListedIndex, ListedIndex, type ListedKey} from '@/services/ListedMods';
+import {listenEvent} from '@/events';
+import type {RepositoryResultData} from '@/apis/search';
+import {loadRepositoryDetail} from '@/apis/repositories/details';
+import {planFor, worthAsking, type RequirementPlan, type ResolvedRequirement} from '@/services/BrowseRequirements';
+import {askRequirements} from '@/dialogs/RequirementsPrompt';
 import './styles.css';
 
 interface SortOption {
@@ -88,6 +94,42 @@ function sortOptionsFor(source: string | undefined): SortOption[] {
     return SORT_OPTIONS[isRepositorySource(source) ? 'repository' : source] ?? [];
 }
 
+/** How a result is found among the mods in your lists */
+function listedKeyOf(item: SearchResultItem): ListedKey | undefined {
+    if (isRepositorySource(item.source)) {
+        const raw = item.rawData as RepositoryResultData | undefined;
+        return raw ? {source: 'repo', repoId: raw.repositoryId, slug: raw.slug} : undefined;
+    }
+    switch (item.source) {
+        case SearchSource.MODIO:
+            return item.platformId ? {source: 'modio', id: item.platformId} : undefined;
+        case SearchSource.NEXUSMODS:
+            return item.platformId ? {source: 'nexus', id: item.platformId} : undefined;
+        case SearchSource.MODCAT:
+            return item.nameId ? {source: 'modcat', id: item.nameId} : undefined;
+        default:
+            return undefined;
+    }
+}
+
+/** A Pak Hub post found from a requirement, as a result to add */
+function repositoryItem(req: ResolvedRequirement): SearchResultItem {
+    const post = req.repoPost!;
+    const raw: RepositoryResultData = {repositoryId: post.repositoryId, baseUrl: post.baseUrl, slug: post.slug, postedAt: '', fileCount: 0};
+    return {
+        id: `repo:${post.repositoryId}:${post.slug}`,
+        nameId: post.slug,
+        name: req.name,
+        summary: '',
+        profileUrl: `${post.baseUrl}/?mod=${encodeURIComponent(post.slug)}`,
+        thumbnailUrl: '',
+        author: {id: 0, name: '', avatarUrl: ''},
+        stats: {downloads: 0, subscribers: 0},
+        source: `repo:${post.repositoryId}` as SearchSourceKey,
+        rawData: raw,
+    };
+}
+
 /** Dropdown entry that opens the repository manager instead of switching source */
 const MANAGE_REPOSITORIES = '__manage_repositories__';
 
@@ -129,6 +171,29 @@ export function SearchPage() {
     const logPanelOffset = useLogPanelOffset();
     const containerHeight = windowContentHeight - logPanelOffset;
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Mods already in your lists, to mark them on the cards (rebuilt when mods are added)
+    const [listed, setListed] = useState<ListedIndex>(() => ListedIndex.empty());
+    const refreshListed = useCallback(async () => {
+        try {
+            setListed(await buildListedIndex());
+        } catch (error) {
+            console.warn('[SearchPage] could not read the lists', error);
+        }
+    }, []);
+    useEffect(() => {
+        void refreshListed();
+        let unlisten: (() => void) | undefined;
+        let alive = true;
+        listenEvent('mods-added', () => refreshListed()).then((fn) => {
+            if (alive) unlisten = fn;
+            else fn();
+        });
+        return () => {
+            alive = false;
+            unlisten?.();
+        };
+    }, [refreshListed]);
 
     // 初始化搜索提供者，并按当前游戏刷新可用源后再做首次加载（避免 RC 时仍用 mod.io）
     useEffect(() => {
@@ -265,31 +330,80 @@ export function SearchPage() {
     );
 
     // 处理添加 mod
+    // The Add Mod window's link for a Nexus mod page: the page itself for Premium, else the file
+    // link from the Nexus window (null when that window was closed)
+    const nexusAddLink = useCallback(async (pageUrl: string, gameId?: number): Promise<string | null> => {
+        const parsed = NexusModsApi.parseModLinks(pageUrl);
+        if (!parsed) throw new Error(t('Invalid Mod Link'));
+        if (await NexusModsApi.canDownloadThroughApi()) return pageUrl;
+        try {
+            return await captureNexusDownloadUrl(pageUrl, {parsed, gameId});
+        } catch (error) {
+            if (isNexusDownloadWindowClosed(error)) return null;
+            throw error;
+        }
+    }, []);
+
     const handleAdd = useCallback(async (item: SearchResultItem) => {
         try {
-            if (isRepositorySource(item.source)) {
-                await addRepositoryMod(item);
-                return;
+            // Mods it needs (Nexus page requirements; what a Pak Hub post names): ask which to add too
+            let extras: ResolvedRequirement[] = [];
+            let plan: RequirementPlan | null = null;
+            try {
+                const detail = isRepositorySource(item.source)
+                    ? await (async () => {
+                        const raw = item.rawData as RepositoryResultData | undefined;
+                        return raw ? await loadRepositoryDetail(raw.baseUrl, raw.slug) : undefined;
+                    })()
+                    : undefined;
+                plan = await planFor(item, await buildListedIndex(), detail, true);
+            } catch (error) {
+                console.warn('[SearchPage] requirements not checked', error);
             }
-            if (item.source === SearchSource.NEXUSMODS) {
-                const parsed = NexusModsApi.parseModLinks(item.profileUrl);
-                if (!parsed) {
-                    message.error(t('Invalid Mod Link'));
-                    return;
-                }
-                // Premium: the API gives the file, no Nexus page needed
-                if (await NexusModsApi.canDownloadThroughApi()) {
-                    await openWindow(AddModType.ONLINE, 0, item.profileUrl);
-                    return;
-                }
-                const node = item.rawData as NexusModsModNode | undefined;
-                const gameId = node?.gameId || Number(node?.game?.id) || undefined;
-                const addModUrl = await captureNexusDownloadUrl(item.profileUrl, { parsed, gameId });
-                await openWindow(AddModType.ONLINE, 0, addModUrl);
-                return;
+            if (worthAsking(plan)) {
+                const answer = await askRequirements(item.nameTrans || item.name, plan!);
+                if (answer === null) return;
+                extras = answer;
             }
 
-            await openWindow(AddModType.ONLINE, 0, item.profileUrl);
+            const links: string[] = [];
+            if (isRepositorySource(item.source)) {
+                const added = await addRepositoryMod(item);
+                if (!added && extras.length === 0) return;
+            } else if (item.source === SearchSource.NEXUSMODS) {
+                const node = item.rawData as NexusModsModNode | undefined;
+                const gameId = node?.gameId || Number(node?.game?.id) || undefined;
+                const link = await nexusAddLink(item.profileUrl, gameId);
+                if (!link) {
+                    message.info(t('nexusmods.windowClosed'));
+                    return;
+                }
+                links.push(link);
+            } else {
+                links.push(item.profileUrl);
+            }
+
+            // the ticked requirements: Nexus / mod.io ones go to the Add Mod window with the mod,
+            // Pak Hub posts are added one after the other
+            const posts: ResolvedRequirement[] = [];
+            for (const req of extras) {
+                if (req.repoPost) {
+                    posts.push(req);
+                } else if (req.source === 'nexus' && req.link) {
+                    const node = item.rawData as NexusModsModNode | undefined;
+                    const link = await nexusAddLink(req.link, node?.gameId || undefined).catch(() => null);
+                    if (link) links.push(link);
+                    else message.info(t('req.skipped', {name: req.name}));
+                } else if (req.link) {
+                    links.push(req.link);
+                }
+            }
+            if (links.length > 0) {
+                await openWindow(AddModType.ONLINE, 0, links.join('\n'));
+            }
+            for (const req of posts) {
+                await addRepositoryMod(repositoryItem(req));
+            }
         } catch (error) {
             if (isNexusDownloadWindowClosed(error)) {
                 message.info(t('nexusmods.windowClosed'));
@@ -298,7 +412,7 @@ export function SearchPage() {
             console.error('Failed to open add mod dialog:', error instanceof Error ? error.message : error);
             message.error(`${t('Add Mod Error')}: ${error instanceof Error ? error.message : String(error)}`);
         }
-    }, []);
+    }, [nexusAddLink]);
 
     // 处理翻译
     const handleTranslate = useCallback(
@@ -496,6 +610,8 @@ export function SearchPage() {
                                 <SearchResultCard
                                     key={item.id}
                                     item={item}
+                                    listed={listed.get(listedKeyOf(item))}
+                                    index={listed}
                                     onAdd={handleAdd}
                                     onTranslate={handleTranslate}
                                     onRestore={handleRestore}

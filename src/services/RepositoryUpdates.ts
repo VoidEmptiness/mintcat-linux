@@ -291,6 +291,11 @@ export const RepositoryUpdates = {
         await save();
     },
 
+    /** Every mod's repository link, by mod id */
+    async allLinks(): Promise<Record<string, RepositoryLink>> {
+        return {...(await load()).byMod};
+    },
+
     /** How many mods are linked to posts of this repository (or were downloaded from it) */
     async linkCount(repoId: string): Promise<number> {
         const store = await load();

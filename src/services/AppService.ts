@@ -20,6 +20,11 @@ export class AppService {
     public async setOAuth(userId: number, platform: string, oauth: string): Promise<void> {
         const oauths = await StorageAPI.getOAuths();
         await oauths.upsertOAuth(userId, platform, oauth);
+        if (platform === 'mod.io' || platform === 'nexusmods') {
+            // the support icons belong to the account of the new key / token
+            const {ModSupport} = await import("@/services/ModSupport");
+            void ModSupport.refresh(true).catch(() => undefined);
+        }
     }
 
     public async getCachePath(): Promise<string> {

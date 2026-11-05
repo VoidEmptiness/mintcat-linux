@@ -36,12 +36,33 @@ export interface NexusModsUserRef {
     avatar?: string;
 }
 
+/** A requirement listed on the mod's Nexus page */
+export interface NexusModsRequirementNode {
+    modId: string | number;
+    modName: string;
+    url?: string;
+    notes?: string | null;
+    /** Not a Nexus mod (a tool or a site); url then points to it */
+    externalRequirement: boolean;
+    gameId?: string | number;
+}
+
+export interface NexusModsModRequirements {
+    nexusRequirements?: { nodes: NexusModsRequirementNode[] };
+    dlcRequirements?: { notes?: string | null; gameExpansion?: { name?: string } | null }[];
+}
+
 export interface NexusModsModNode {
     id?: string;
     uid?: string;
     modId: number;
     gameId?: number;
     name: string;
+    /** What the mod's page lists as needed */
+    modRequirements?: NexusModsModRequirements;
+    /** With an API key: the key's account tracks / endorsed it */
+    viewerTracked?: boolean;
+    viewerEndorsed?: boolean;
     summary?: string;
     description?: string;
     author?: string;

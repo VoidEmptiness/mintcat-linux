@@ -122,6 +122,23 @@
 /* 统计信息 */
 .search-result-card-stats {
     margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.search-result-card-stats .support-buttons .ant-btn {
+    color: #999;
+}
+
+.search-result-card-stats .support-buttons .ant-btn.support-on {
+    color: var(--ant-color-primary);
+}
+
+.search-result-card-stats .support-buttons .ant-btn.support-on.support-down {
+    color: var(--ant-color-error);
 }
 
 .search-result-card-stat {
@@ -243,4 +260,60 @@
         #2a2a2a 75%
     );
     background-size: 200% 100%;
+}
+
+/* "In your list" mark next to the title */
+.search-result-card-listed {
+    margin-inline-start: 4px;
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+}
+
+/* Requirements / author notes / support buttons under the description */
+.search-result-card-extra {
+    margin-top: 4px;
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+}
+
+.search-result-req {
+    margin-inline-end: 0;
+    font-size: 11px;
+    line-height: 18px;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.search-result-req-link {
+    cursor: pointer;
+}
+
+.search-result-notes {
+    max-width: 420px;
+    max-height: 320px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+.search-result-notes-mentions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.search-result-notes-link {
+    font-size: 12px;
 }

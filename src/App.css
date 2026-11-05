@@ -772,3 +772,57 @@ body::before {
     font-size: 12px;
     white-space: nowrap;
 }
+
+/* Mod list: note / endorsed-liked / tracked-subscribed columns at the right of each row */
+.mod-status-columns {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-inline-start: 2px;
+}
+
+.mod-status-cell {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+}
+
+.mod-status-icon {
+    font-size: 13px;
+    color: var(--ant-color-text-tertiary);
+}
+
+.mod-status-on {
+    color: var(--ant-color-primary);
+}
+
+.mod-status-down {
+    color: var(--ant-color-error);
+}
+
+.mod-status-note {
+    color: var(--ant-color-warning);
+    cursor: pointer;
+}
+
+.mod-status-note:hover {
+    filter: brightness(1.2);
+}
+
+.mod-note-tooltip {
+    white-space: pre-wrap;
+    max-height: 260px;
+    overflow: hidden;
+}
+
+/* Browse Mods / menus: track, endorse, subscribe, like buttons that are on */
+.support-buttons .support-on {
+    color: var(--ant-color-primary);
+}
+
+.support-buttons .support-on.support-down {
+    color: var(--ant-color-error);
+}

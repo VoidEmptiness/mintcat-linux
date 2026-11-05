@@ -57,6 +57,10 @@ export interface RepositoryModDetail {
     name: string;
     content: string;
     files: RepositoryFile[];
+    /** Later messages of the post's author in its thread (updates, requirements, load order) */
+    authorPosts?: string[];
+    /** The Discord message the post was taken from */
+    sourceUrl?: string;
 }
 
 export type RepositorySort = 'newest' | 'oldest' | 'name' | 'name-desc' | 'most-files' | 'fewest-files';
@@ -161,10 +165,17 @@ export const RepositoryApi = {
                 seen.add(key);
             }
         }
+        const author = str(data?.initialPost?.postedBy);
+        const authorPosts = (Array.isArray(data?.threadPosts) ? data.threadPosts : [])
+            .filter((post: any) => author && str(post?.postedBy) === author)
+            .map((post: any) => str(post?.content).slice(0, 4000))
+            .filter(Boolean);
         return {
             name: str(data?.mod?.name, slug),
             content: str(data?.initialPost?.content),
             files,
+            authorPosts,
+            sourceUrl: str(data?.mod?.sourceUrl ?? data?.initialPost?.sourceUrl) || undefined,
         };
     },
 

@@ -77,6 +77,14 @@ export class NexusModsAuthenticationRequiredError extends Error {
     }
 }
 
+/** Nexus wouldn't take an endorsement: NOT_DOWNLOADED_MOD, TOO_SOON_AFTER_DOWNLOAD or IS_OWN_MOD */
+export class NexusModsEndorseError extends Error {
+    constructor(public readonly code: string, detail: string) {
+        super(detail);
+        this.name = 'NexusModsEndorseError';
+    }
+}
+
 /** How long an account check is reused (premium can change, but not by the minute) */
 const ACCOUNT_CHECK_TTL_MS = 10 * 60_000;
 let accountCheck: { key: string; at: number; account: NexusModsAccount | null } | null = null;
@@ -139,6 +147,55 @@ export class NexusModsApi {
 
     public static async isAuthenticated(): Promise<boolean> {
         return !!(await NexusModsApi.getApiKey());
+    }
+
+    // ---------- tracking and endorsing (the API key's account) ----------
+
+    /** Mods the key's account tracks (all games) */
+    public static async getTrackedMods(): Promise<{ modId: number; domain: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string }[]>('/v1/user/tracked_mods.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase()}));
+    }
+
+    /** Endorsement status of every mod the account endorsed or abstained from (all games) */
+    public static async getEndorsements(): Promise<{ modId: number; domain: string; status: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string; status?: string }[]>('/v1/user/endorsements.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase(), status: String(m.status ?? '')}));
+    }
+
+    public static async setTracked(domain: string, modId: number, tracked: boolean): Promise<void> {
+        const query = new URLSearchParams({domain_name: domain});
+        // DELETE with a body isn't sent by every HTTP stack: the id goes in the query too
+        if (!tracked) query.set('mod_id', String(modId));
+        await NexusModsApi.requestJson(`/v1/user/tracked_mods.json?${query}`, {
+            method: tracked ? 'POST' : 'DELETE',
+            form: {mod_id: String(modId)},
+            allowStatus: tracked ? [] : [404], // not tracked anyway
+        });
+    }
+
+    /**
+     * Endorse a mod (or take the endorsement back: "abstain"). Nexus only takes endorsements for
+     * mods the account downloaded; its reason comes back as NexusModsEndorseError.
+     */
+    public static async setEndorsed(domain: string, modId: number, endorse: boolean, version?: string): Promise<string> {
+        const form: Record<string, string> = {};
+        if (version) form.version = version;
+        try {
+            const data = await NexusModsApi.requestJson<{ status?: string }>(
+                `/v1/games/${encodeURIComponent(domain)}/mods/${modId}/${endorse ? 'endorse' : 'abstain'}.json`,
+                {method: 'POST', form});
+            return String(data?.status ?? (endorse ? 'Endorsed' : 'Abstained'));
+        } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            const code = /\b(NOT_DOWNLOADED_MOD|TOO_SOON_AFTER_DOWNLOAD|IS_OWN_MOD)\b/.exec(text)?.[1];
+            if (code) throw new NexusModsEndorseError(code, text);
+            throw error;
+        }
     }
 
     public static getModUrl(domain: string, modId: number): string {
@@ -295,6 +352,26 @@ export class NexusModsApi {
                             name
                             avatar
                         }
+                        modRequirements {
+                            nexusRequirements {
+                                nodes {
+                                    modId
+                                    modName
+                                    url
+                                    notes
+                                    externalRequirement
+                                    gameId
+                                }
+                            }
+                            dlcRequirements {
+                                notes
+                                gameExpansion {
+                                    name
+                                }
+                            }
+                        }
+                        viewerTracked
+                        viewerEndorsed
                     }
                     totalCount
                     nodesCount
@@ -578,18 +655,27 @@ export class NexusModsApi {
         options: {
             method?: string;
             body?: string;
+            /** Sent as a form (what the v1 write calls take) instead of `body` */
+            form?: Record<string, string>;
+            /** Statuses that count as done (e.g. 404 when removing something that isn't there) */
+            allowStatus?: number[];
             isFullUrl?: boolean;
             parseAsResponse?: boolean;
         } = {},
     ): Promise<T> {
         const headers = await NexusModsApi.getHeaders();
+        let body = options.body;
+        if (options.form) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            body = new URLSearchParams(options.form).toString();
+        }
         const url = options.isFullUrl ? pathOrUrl : `${NEXUSMODS_API_BASE_URL}${pathOrUrl}`;
         const result = await NetworkApi.request<Response>({
             service: 'nexusmods.request',
             url,
             method: options.method ?? 'GET',
             headers,
-            body: options.body,
+            body,
             proxyPolicy: 'mintcatProxyFallback',
             parseAs: 'response',
         });
@@ -597,6 +683,9 @@ export class NexusModsApi {
         const response = result.response;
         if (options.parseAsResponse) {
             return response as T;
+        }
+        if (!response.ok && options.allowStatus?.includes(response.status)) {
+            return {} as T;
         }
         if (!response.ok) {
             const message = await response.text().catch(() => '');

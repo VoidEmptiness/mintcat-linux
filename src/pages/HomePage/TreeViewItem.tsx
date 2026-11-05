@@ -24,6 +24,7 @@ import {
     PlayCircleOutlined,
     PauseCircleOutlined,
     AimOutlined,
+    FileTextOutlined,
 } from "@ant-design/icons";
 import {folderCounts} from "./FolderOps";
 import {open} from "@tauri-apps/plugin-shell";
@@ -48,6 +49,11 @@ import {TreeViewConverter} from "./TreeViewConverter";
 import {useInstallOrder, useShowLocalPaths} from "@/services/ListDisplay";
 import {RepositoryUpdates} from "@/services/RepositoryUpdates";
 import {logActivity} from "@/services/ActivityLog";
+import {ModNotes} from "@/services/ModNotes";
+import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
+import {editModNote, removeModNote} from "@/dialogs/ModNoteDialog";
+import {handleSupportMenu, supportMenuItems} from "@/components/SupportButtons";
+import {ModStatusIcons} from "./ModStatusIcons";
 
 const {useToken} = theme;
 
@@ -1423,6 +1429,15 @@ function TreeViewItemInner({
     }), [nodeData.modId, nodeData.platformId, nodeData.nameId, nodeData.sourceType, nodeData.url]);
     // Menu shows Link/Unlink depending on the mod's repository link
     const repoLinkVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
+    // Note / support entries follow the saved note and the accounts' lists
+    useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
+    useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    const hasNote = !!ModNotes.get(nodeData.modId);
+    const supportKind = nodeData.platformId
+        ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
+            : nodeData.sourceType === ModSourceType.Modio ? 'modio' as const : undefined
+        : undefined;
+    const nexusDomain = supportKind === 'nexus' ? nexusDomainOf(nodeData.url) : '';
     const repoLink = RepositoryUpdates.linkForModAt(nodeData, repoLinkVersion);
 
     const [enabled, setEnabled] = useState(() =>
@@ -1466,6 +1481,10 @@ function TreeViewItemInner({
         {label: t('Delete'), key: 'delete', icon: <DeleteOutlined />},
         {label: t('Copy Link'), key: 'copy_link', icon: <LinkOutlined />},
         {label: t('Export'), key: 'export', icon: <ExportOutlined />},
+        {type: 'divider' as const},
+        {label: t(hasNote ? 'notes.editMenu' : 'notes.addMenu'), key: 'note_edit', icon: <FileTextOutlined />},
+        ...(hasNote ? [{label: t('notes.removeMenu'), key: 'note_remove', icon: <DeleteOutlined />}] : []),
+        ...(supportMenuItems(supportKind, nexusDomain, nodeData.platformId) ?? []),
         ...(nodeData.sourceType === ModSourceType.Local ? [
             {type: 'divider' as const},
             {
@@ -1494,6 +1513,13 @@ function TreeViewItemInner({
                               if (e.key.startsWith('move_to_folder-')) {
                                   const targetFolderKey = e.key.replace('move_to_', '');
                                   onMoveToFolder?.(nodeData.key, targetFolderKey);
+                              } else if (e.key === 'note_edit') {
+                                  void editModNote(nodeData.modId, nodeData.title || nodeData.nameId || '');
+                              } else if (e.key === 'note_remove') {
+                                  void removeModNote(nodeData.modId, nodeData.title || nodeData.nameId || '');
+                              } else if (handleSupportMenu(e.key, nexusDomain, nodeData.platformId,
+                                  nodeData.title || nodeData.nameId || '', nodeData.usedVersion || undefined)) {
+                                  // sent to Nexus Mods / mod.io
                               } else {
                                   onMenuClick(e.key, nodeData.key);
                               }
@@ -1559,6 +1585,8 @@ function TreeViewItemInner({
                         {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
                             <ModTreeViewProgressPercent nodeData={nodeData}/>
                         }
+
+                        <ModStatusIcons nodeData={nodeData}/>
                     </span>
                 </ModTreeViewProgressBackground>
             </Dropdown>
