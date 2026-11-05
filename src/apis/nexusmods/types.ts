@@ -20,7 +20,7 @@ export interface NexusModsSearchParams {
     page: number;
     pageSize: number;
     domain?: string;
-    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name';
+    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files';
     sortOrder?: 'asc' | 'desc';
 }
 

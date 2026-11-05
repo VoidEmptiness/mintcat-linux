@@ -80,12 +80,22 @@ body::before {
     vertical-align: center;
 }
 
+/* The avatar's slot is as tall as the header and centers it, like the buttons next to it
+   (as an inline box it sat on the text baseline, a few pixels lower than the buttons) */
+.app-header-avatar-slot {
+    display: inline-flex;
+    align-items: center;
+    height: 48px;
+}
+
 .app-header-avatar {
     align-items: center;
+    justify-content: center;
     text-align: center;
     display: inline-flex;
-    margin-top: 8px;
+    flex-shrink: 0;
     margin-right: 10px;
+    cursor: pointer;
 }
 
 .ant-header-start-button {

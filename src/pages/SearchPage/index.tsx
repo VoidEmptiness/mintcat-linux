@@ -30,7 +30,7 @@ import {
 } from '@/apis/search';
 import {RepositoryManagerDialog} from '@/dialogs/RepositoryManagerDialog';
 import {addRepositoryMod} from '@/services/RepositoryModInstaller';
-import {removeRepository} from '@/services/RepositoryRemoval';
+import {hideBuiltInSource, removeRepository} from '@/services/RepositoryRemoval';
 import {RepositoryStore} from '@/apis/repositories';
 import {getSearchViewModel} from './SearchViewModel';
 import type {ModRepository} from '@/apis/repositories';
@@ -41,14 +41,52 @@ import {captureNexusDownloadUrl, isNexusDownloadWindowClosed} from '@/apis/nexus
 import type {NexusModsModNode} from '@/apis/nexusmods/types';
 import './styles.css';
 
-// mod.io 排序选项：value 为 sortBy_sortOrder，便于与 state 同步
-const MODIO_SORT_OPTIONS: { value: string; sortBy: SearchSortBy; sortOrder: SearchSortOrder }[] = [
-    { value: 'date_desc', sortBy: 'date', sortOrder: 'desc' },
-    { value: 'downloads_desc', sortBy: 'downloads', sortOrder: 'desc' },
-    { value: 'rating_desc', sortBy: 'rating', sortOrder: 'desc' },
-    { value: 'name_asc', sortBy: 'name', sortOrder: 'asc' },
-    { value: 'name_desc', sortBy: 'name', sortOrder: 'desc' },
-];
+interface SortOption {
+    value: string;
+    sortBy: SearchSortBy;
+    sortOrder: SearchSortOrder;
+    labelKey: string;
+}
+
+const sortOption = (sortBy: SearchSortBy, sortOrder: SearchSortOrder, labelKey: string): SortOption =>
+    ({value: `${sortBy}_${sortOrder}`, sortBy, sortOrder, labelKey});
+
+/**
+ * How each source can sort (what its site's API offers). The first one is the default.
+ * Pak Hub-style repositories only know post dates, names and file counts (no downloads or likes).
+ */
+const SORT_OPTIONS: Partial<Record<string, SortOption[]>> = {
+    [SearchSource.MODIO]: [
+        sortOption('date', 'desc', 'sort.recentlyUpdated'),
+        sortOption('created', 'desc', 'sort.newest'),
+        sortOption('downloads', 'desc', 'sort.mostDownloaded'),
+        sortOption('subscribers', 'desc', 'sort.mostSubscribed'),
+        sortOption('rating', 'desc', 'sort.topRated'),
+        sortOption('name', 'asc', 'sort.nameAZ'),
+        sortOption('name', 'desc', 'sort.nameZA'),
+    ],
+    [SearchSource.NEXUSMODS]: [
+        sortOption('date', 'desc', 'sort.recentlyUpdated'),
+        sortOption('created', 'desc', 'sort.newest'),
+        sortOption('downloads', 'desc', 'sort.mostDownloaded'),
+        sortOption('rating', 'desc', 'sort.mostEndorsed'),
+        sortOption('name', 'asc', 'sort.nameAZ'),
+        sortOption('name', 'desc', 'sort.nameZA'),
+    ],
+    repository: [
+        sortOption('date', 'desc', 'sort.newestPosts'),
+        sortOption('date', 'asc', 'sort.oldestPosts'),
+        sortOption('name', 'asc', 'sort.nameAZ'),
+        sortOption('name', 'desc', 'sort.nameZA'),
+        sortOption('files', 'desc', 'sort.mostFiles'),
+        sortOption('files', 'asc', 'sort.fewestFiles'),
+    ],
+};
+
+function sortOptionsFor(source: string | undefined): SortOption[] {
+    if (!source) return [];
+    return SORT_OPTIONS[isRepositorySource(source) ? 'repository' : source] ?? [];
+}
 
 /** Dropdown entry that opens the repository manager instead of switching source */
 const MANAGE_REPOSITORIES = '__manage_repositories__';
@@ -187,9 +225,13 @@ export function SearchPage() {
                 setRepoDialogOpen(true);
                 return;
             }
-            switchSource(value);
+            // keep the sort when the new source has it, else use that source's default
+            const options = sortOptionsFor(value);
+            const keeps = options.some(o => o.sortBy === state?.sortBy && o.sortOrder === state?.sortOrder);
+            const fallback = options[0] ?? sortOption('date', 'desc', '');
+            switchSource(value, keeps ? undefined : {sortBy: fallback.sortBy, sortOrder: fallback.sortOrder});
         },
-        [switchSource]
+        [switchSource, state?.sortBy, state?.sortOrder]
     );
 
     // Repositories added/removed: refresh the source list (and jump to a newly added one)
@@ -202,20 +244,24 @@ export function SearchPage() {
         }
     }, [refreshAvailableSources, switchSource]);
 
-    // Remove a repository from the source dropdown (same as in "Add or remove repositories…")
-    const handleRemoveRepository = useCallback(async (source: string) => {
-        const repo = await RepositoryStore.get(source.replace(/^repo:/, ''));
-        if (!repo) return;
-        if (await removeRepository(repo)) await handleRepositoriesChanged();
-    }, [handleRepositoriesChanged]);
+    // Remove a source from the dropdown (same as in "Add or remove sources…")
+    const handleRemoveSource = useCallback(async (source: string) => {
+        if ((state?.availableSources?.length ?? 0) <= 1) return;
+        if (isRepositorySource(source)) {
+            const repo = await RepositoryStore.get(source.replace(/^repo:/, ''));
+            if (repo && await removeRepository(repo)) await handleRepositoriesChanged();
+            return;
+        }
+        if (await hideBuiltInSource(source)) await handleRepositoriesChanged();
+    }, [handleRepositoriesChanged, state?.availableSources?.length]);
 
-    // 处理 mod.io 排序变更
+    // Sort of the current source
     const handleSortChange = useCallback(
         (value: string) => {
-            const option = MODIO_SORT_OPTIONS.find((o) => o.value === value);
+            const option = sortOptionsFor(state?.currentSource).find((o) => o.value === value);
             if (option) setSort(option.sortBy, option.sortOrder);
         },
-        [setSort]
+        [setSort, state?.currentSource]
     );
 
     // 处理添加 mod
@@ -287,6 +333,8 @@ export function SearchPage() {
         return options;
     }, [state?.availableSources, state?.currentSource]);
 
+    const currentSortOptions = useMemo(() => sortOptionsFor(state?.currentSource), [state?.currentSource]);
+
     // 搜索占位符
     const placeholder = useMemo(() => {
         return getSearchPlaceholder();
@@ -320,6 +368,7 @@ export function SearchPage() {
         <>
         <RepositoryManagerDialog open={repoDialogOpen}
                                  onClose={() => setRepoDialogOpen(false)}
+                                 visibleSources={state?.availableSources ?? []}
                                  onChanged={handleRepositoriesChanged}/>
         <div
             ref={containerRef}
@@ -351,16 +400,20 @@ export function SearchPage() {
                         popupMatchSelectWidth={false}
                         optionRender={(option) => {
                             const source = String(option.value ?? '');
-                            if (!isRepositorySource(source)) return option.label;
-                            // repositories can be removed right here
+                            if (source === MANAGE_REPOSITORIES) return option.label;
+                            // any source can be removed right here (built-in ones can be added back
+                            // in the repository manager); the last one stays
+                            const last = (state?.availableSources?.length ?? 0) <= 1;
+                            const title = last ? t('repo.cantRemoveLast') : t('repo.removeTitle', {name: String(option.label ?? '')});
                             return (
                                 <Flex align="center" justify="space-between" gap={12}>
                                     <span>{option.label}</span>
                                     <Button size="small" type="text" danger
                                             className="search-source-remove"
                                             icon={<DeleteOutlined/>}
-                                            title={t('repo.removeTitle', {name: String(option.label ?? '')})}
-                                            aria-label={t('repo.removeTitle', {name: String(option.label ?? '')})}
+                                            disabled={last}
+                                            title={title}
+                                            aria-label={title}
                                             onMouseDown={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
@@ -368,34 +421,24 @@ export function SearchPage() {
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                void handleRemoveRepository(source);
+                                                void handleRemoveSource(source);
                                             }}/>
                                 </Flex>
                             );
                         }}
                     />
 
-                    {/* mod.io 排序（仅当前源为 mod.io 时显示） */}
-                    {state?.currentSource === SearchSource.MODIO && (
+                    {/* Sort, for sources that can sort (not ModCat) */}
+                    {currentSortOptions.length > 0 && (
                         <Select
-                            value={`${state?.sortBy ?? 'date'}_${state?.sortOrder ?? 'desc'}`}
-                            options={MODIO_SORT_OPTIONS.map((o) => ({
-                                value: o.value,
-                                label: t(
-                                    o.value === 'date_desc'
-                                        ? 'Latest'
-                                        : o.value === 'downloads_desc'
-                                          ? 'Popular'
-                                          : o.value === 'rating_desc'
-                                            ? 'Top Rated'
-                                            : o.value === 'name_asc'
-                                              ? 'Name A–Z'
-                                              : 'Name Z–A'
-                                ),
-                            }))}
+                            value={currentSortOptions.find(o => o.sortBy === state?.sortBy && o.sortOrder === state?.sortOrder)?.value
+                                ?? currentSortOptions[0].value}
+                            options={currentSortOptions.map((o) => ({value: o.value, label: t(o.labelKey)}))}
                             onChange={handleSortChange}
                             disabled={isLoading}
-                            style={{width: 120}}
+                            title={t('sort.title')}
+                            style={{width: 150}}
+                            popupMatchSelectWidth={false}
                         />
                     )}
 

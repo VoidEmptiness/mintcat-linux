@@ -10,6 +10,7 @@ import {
     type SearchSourceKey,
 } from '@/apis/search';
 import {CacheApi} from '@/apis/CacheApi';
+import {HiddenSources} from '@/apis/search/HiddenSources';
 import {TranslateApi} from '@/apis/TranslateApi';
 import {StorageAPI} from '@/storage';
 import {NEXUSMODS_DRG_DOMAIN, NEXUSMODS_ROGUE_CORE_DOMAIN} from '@/apis/nexusmods';
@@ -17,7 +18,7 @@ import {NEXUSMODS_DRG_DOMAIN, NEXUSMODS_ROGUE_CORE_DOMAIN} from '@/apis/nexusmod
 /**
  * 搜索状态
  */
-export type SearchSortBy = 'downloads' | 'subscribers' | 'rating' | 'date' | 'name';
+export type SearchSortBy = 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files';
 export type SearchSortOrder = 'asc' | 'desc';
 
 export interface SearchState {
@@ -134,13 +135,18 @@ export class SearchViewModel {
             return !gameName || repoGame === gameName;
         });
 
+        let sources: SearchSourceKey[];
         if (gameName === 'rc') {
-            return [...[SearchSource.NEXUSMODS, SearchSource.MODCAT].filter((s) => allSources.includes(s)), ...repoSources];
+            sources = [...[SearchSource.NEXUSMODS, SearchSource.MODCAT].filter((s) => allSources.includes(s)), ...repoSources];
+        } else if (gameName === 'drg') {
+            sources = [...allSources.filter((s) => s === SearchSource.MODIO || s === SearchSource.MODCAT || s === SearchSource.NEXUSMODS), ...repoSources];
+        } else {
+            sources = allSources;
         }
-        if (gameName === 'drg') {
-            return [...allSources.filter((s) => s === SearchSource.MODIO || s === SearchSource.MODCAT || s === SearchSource.NEXUSMODS), ...repoSources];
-        }
-        return allSources;
+        // Built-in sources the user removed from the list (never all of them)
+        const hidden = await HiddenSources.list();
+        const visible = sources.filter((s) => !hidden.has(s));
+        return visible.length > 0 ? visible : sources;
     }
 
     /**
@@ -208,12 +214,16 @@ export class SearchViewModel {
     /**
      * 切换搜索源
      */
-    public async switchSource(source: SearchSourceKey): Promise<void> {
+    /**
+     * @param sort the new source's sort, when the current one is something it can't sort by
+     */
+    public async switchSource(source: SearchSourceKey, sort?: { sortBy: SearchSortBy; sortOrder: SearchSortOrder }): Promise<void> {
         if (source === this.state.currentSource) return;
 
         this.cancelCurrentRequest();
         this.setState({
             currentSource: source,
+            ...(sort ?? {}),
             items: [],
             page: 0,
             hasMore: false,

@@ -59,7 +59,7 @@ export interface RepositoryModDetail {
     files: RepositoryFile[];
 }
 
-export type RepositorySort = 'newest' | 'oldest' | 'name' | 'name-desc' | 'most-files';
+export type RepositorySort = 'newest' | 'oldest' | 'name' | 'name-desc' | 'most-files' | 'fewest-files';
 
 const SETTINGS_KEY = 'customModRepositories';
 /** Ids of removed repositories by address, so adding one again links its mods again */

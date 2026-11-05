@@ -639,6 +639,8 @@ export class NexusModsApi {
                 return [{ downloads: { direction } }];
             case 'rating':
                 return [{ endorsements: { direction } }];
+            case 'created':
+                return [{ createdAt: { direction } }];
             case 'date':
             default:
                 return [{ updatedAt: { direction } }];

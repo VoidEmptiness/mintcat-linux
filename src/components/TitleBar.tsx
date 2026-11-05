@@ -392,7 +392,8 @@ class TitleBar extends React.Component<any, any> {
                             </Tooltip>
                         </Popover>
                     </span>
-                    <span onContextMenu={(e) => {
+                    <span className={"app-header-avatar-slot"}
+                          onContextMenu={(e) => {
                         e.preventDefault();
                         TitleBarLook.openPicker("avatar");
                     }}>

@@ -4,13 +4,16 @@ import {Button, Empty, Flex, Input, List, message, Modal, Select, Typography} fr
 import {DeleteOutlined, PlusOutlined} from "@ant-design/icons";
 import {ModRepository, normalizeRepositoryUrl, RepositoryGame, RepositoryStore, SUGGESTED_REPOSITORIES} from "@/apis/repositories";
 import {logActivity} from "@/services/ActivityLog";
-import {removeRepository} from "@/services/RepositoryRemoval";
+import {hideBuiltInSource, removeRepository, showBuiltInSource} from "@/services/RepositoryRemoval";
+import {BUILT_IN_SOURCE_NAMES, BUILT_IN_SOURCES, HiddenSources} from "@/apis/search/HiddenSources";
 
 interface Props {
     open: boolean;
     onClose: () => void;
     /** Called after a repository was added or removed */
     onChanged: (added?: ModRepository) => void;
+    /** Sources the Browse Mods list shows now (the last one can't be removed) */
+    visibleSources?: string[];
 }
 
 function addErrorText(error: unknown): string {
@@ -21,8 +24,9 @@ function addErrorText(error: unknown): string {
     return t("repo.errorUnreachable", {reason: msg});
 }
 
-export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
+export function RepositoryManagerDialog({open, onClose, onChanged, visibleSources = []}: Props) {
     const [repos, setRepos] = useState<ModRepository[]>([]);
+    const [hiddenBuiltIns, setHiddenBuiltIns] = useState<Set<string>>(new Set());
     const [name, setName] = useState("");
     const [url, setUrl] = useState("");
     const [game, setGame] = useState<RepositoryGame>('drg');
@@ -31,6 +35,7 @@ export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
 
     useEffect(() => {
         if (!open) return;
+        HiddenSources.list().then(hidden => setHiddenBuiltIns(new Set(hidden)));
         RepositoryStore.list().then(list => setRepos([...list]));
         return RepositoryStore.subscribe(() => RepositoryStore.list().then(list => setRepos([...list])));
     }, [open]);
@@ -70,8 +75,20 @@ export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
         }
     });
 
+    const lastSource = visibleSources.length <= 1;
+
     const onRemove = async (repo: ModRepository) => {
         if (await removeRepository(repo)) onChanged();
+    };
+
+    const onToggleBuiltIn = async (source: string) => {
+        if (hiddenBuiltIns.has(source)) {
+            await showBuiltInSource(source);
+        } else if (!(await hideBuiltInSource(source))) {
+            return;
+        }
+        setHiddenBuiltIns(new Set(await HiddenSources.list()));
+        onChanged();
     };
 
     return (
@@ -85,6 +102,37 @@ export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
                 {t("repo.manageHint")}
             </Typography.Paragraph>
 
+            <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.builtIn")}</Typography.Text>
+            <List size="small"
+                  bordered
+                  style={{marginTop: 4, marginBottom: 12}}
+                  dataSource={BUILT_IN_SOURCES as string[]}
+                  renderItem={(source) => {
+                      const hidden = hiddenBuiltIns.has(source);
+                      const shown = visibleSources.includes(source);
+                      return (
+                          <List.Item actions={[
+                              hidden
+                                  ? <Button key="show" size="small" icon={<PlusOutlined/>}
+                                            onClick={() => onToggleBuiltIn(source)}>{t("repo.addBack")}</Button>
+                                  : <Button key="hide" size="small" type="text" danger icon={<DeleteOutlined/>}
+                                            disabled={shown && lastSource}
+                                            title={shown && lastSource ? t("repo.cantRemoveLast") : undefined}
+                                            onClick={() => onToggleBuiltIn(source)}>{t("repo.remove")}</Button>
+                          ]}>
+                              <Flex vertical>
+                                  <Typography.Text strong type={hidden ? "secondary" : undefined}>
+                                      {BUILT_IN_SOURCE_NAMES[source]}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary" style={{fontSize: 12}}>
+                                      {hidden ? t("repo.builtInHidden") : t("repo.builtInShown")}
+                                  </Typography.Text>
+                              </Flex>
+                          </List.Item>
+                      );
+                  }}/>
+
+            <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.yourRepositories")}</Typography.Text>
             {repos.length === 0
                 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("repo.none")} style={{margin: "8px 0"}}/>
                 : <List size="small"
@@ -93,6 +141,8 @@ export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
                         renderItem={(repo) => (
                             <List.Item actions={[
                                 <Button key="remove" size="small" type="text" danger icon={<DeleteOutlined/>}
+                                        disabled={lastSource && visibleSources.includes(`repo:${repo.id}`)}
+                                        title={lastSource && visibleSources.includes(`repo:${repo.id}`) ? t("repo.cantRemoveLast") : undefined}
                                         onClick={() => onRemove(repo)}>{t("repo.remove")}</Button>
                             ]}>
                                 <Flex vertical>

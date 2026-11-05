@@ -279,26 +279,28 @@ export class ModioApi {
      * @see https://docs.mod.io/restapiref/#get-mods
      */
     private static getModListSortParam(
-        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name',
+        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files',
         sortOrder?: 'asc' | 'desc'
     ): string | undefined {
         if (!sortBy || !sortOrder) return undefined;
         const desc = sortOrder === 'desc';
         const map: Record<string, string> = {
             date: desc ? '-date_updated' : 'date_updated',
+            created: desc ? '-date_live' : 'date_live',
             downloads: desc ? '-downloads_total' : 'downloads_total',
             subscribers: desc ? '-subscribers_total' : 'subscribers_total',
             rating: desc ? '-ratings_weighted_aggregate' : 'ratings_weighted_aggregate',
             name: desc ? '-name' : 'name',
         };
-        return map[sortBy];
+        // a sort mod.io doesn't have (e.g. kept from another source): its default, recently updated
+        return map[sortBy] ?? map.date;
     }
 
     public static async getModList(
         pageNo: number = 0,
         pageSize: number = 20,
         name: string = undefined,
-        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name',
+        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files',
         sortOrder?: 'asc' | 'desc'
     ): Promise<ModInfo[]> {
         try {

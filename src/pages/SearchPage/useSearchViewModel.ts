@@ -77,8 +77,8 @@ export function useSearchViewModel() {
     }, []);
 
     // 切换搜索源
-    const switchSource = useCallback((source: SearchSourceKey) => {
-        return viewModelRef.current?.switchSource(source);
+    const switchSource = useCallback((source: SearchSourceKey, sort?: { sortBy: SearchSortBy; sortOrder: SearchSortOrder }) => {
+        return viewModelRef.current?.switchSource(source, sort);
     }, []);
 
     // 翻译项目

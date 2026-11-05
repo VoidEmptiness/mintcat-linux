@@ -43,7 +43,8 @@ export class RepositorySearchProvider implements ISearchProvider {
         const {query, page, pageSize, sortBy, sortOrder} = params;
         let sort: RepositorySort = 'newest';
         if (sortBy === 'name') sort = sortOrder === 'desc' ? 'name-desc' : 'name';
-        else if (sortBy === 'date' && sortOrder === 'asc') sort = 'oldest';
+        else if ((sortBy === 'date' || sortBy === 'created') && sortOrder === 'asc') sort = 'oldest';
+        else if (sortBy === 'files') sort = sortOrder === 'asc' ? 'fewest-files' : 'most-files';
 
         try {
             // The app pages from 0; repositories page from 1 with their own page size

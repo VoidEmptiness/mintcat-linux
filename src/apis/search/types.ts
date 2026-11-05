@@ -80,7 +80,7 @@ export interface SearchParams {
     /** Nexus Mods 游戏域名（如 deeprockgalactic / deeprockgalacticroguecore） */
     nexusmodsGameDomain?: string;
     /** 排序字段 */
-    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name';
+    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files';
     /** 排序方向 */
     sortOrder?: 'asc' | 'desc';
     /** 标签过滤 */
