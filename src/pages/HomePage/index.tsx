@@ -1360,6 +1360,11 @@ export class HomePage extends BasePage<any, ModListPageState> {
             .map(m => ({modId: m.modId!, platformId: m.platformId, nameId: m.nameId, sourceType: m.sourceType, url: m.url})));
         // Link local mods to their repository (Pak Hub) posts in the background, by file name
         RepositoryUpdates.scheduleAutoLink(allMods.filter(m => inProfile.has(m.modId!)));
+        // the newest game version mod.io mods are tagged for (older ones are marked)
+        GameVersions.setLatest(newestGameVersion(allMods
+            .filter(m => m.sourceType === ModSourceType.Modio)
+            .flatMap(m => m.version?.availableVersions ?? [])));
+
 
         // TreeViewConverter now accepts CompleteModData[] and ProfileModData[]
         const converter = new TreeViewConverter(allMods, profileMods);
