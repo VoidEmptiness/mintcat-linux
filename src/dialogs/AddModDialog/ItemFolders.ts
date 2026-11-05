@@ -21,6 +21,8 @@ export interface ItemFolders {
     set(key: string, folderId: number): void;
     /** The tab's current mods (keys), so the dialog can count those going elsewhere */
     report(prefix: string, keys: string[]): void;
+    /** Make a new folder for the mod with this key */
+    newFolder?(key: string): void;
 }
 
 /** Pick a folder for one mod; picking the dialog's folder makes it follow that folder again */
@@ -81,4 +83,72 @@ export function byFolder<T>(items: T[], folderOf: (item: T) => number): Map<numb
         groups.set(id, list);
     }
     return groups;
+}
+
+/**
+ * A folder made in the Add Mod window. It only exists there (with a negative id) until OK:
+ * then the folders the mods go to are created (with any new folders they're in), so cancelling
+ * leaves nothing behind.
+ */
+export interface PlannedFolder {
+    id: number;
+    name: string;
+    /** 0: top level; a negative id: another new folder */
+    parentId: number;
+}
+
+/** Ordering key that puts new folders after their existing siblings */
+const PLANNED_SORT_BASE = 1_000_000_000;
+
+/** Existing and new folders as one list for foldersInTreeOrder (new ones after their siblings) */
+export function withPlannedFolders<F extends { id?: number | null; name: string; parentFolderId?: number | null; sortOrder?: number | null }>(
+    existing: F[], planned: PlannedFolder[]): (F | { id: number; name: string; parentFolderId: number | null; sortOrder: number; planned: true })[] {
+    return [
+        ...existing,
+        ...planned.map((p, i) => ({
+            id: p.id,
+            name: p.name,
+            parentFolderId: p.parentId || null,
+            sortOrder: PLANNED_SORT_BASE + i,
+            planned: true as const,
+        })),
+    ];
+}
+
+/** Whether `parentId` already has a folder (existing or new) with this name (any case) */
+export function folderNameTaken(existing: { name: string; parentFolderId?: number | null }[], planned: PlannedFolder[],
+                                name: string, parentId: number): boolean {
+    const wanted = name.trim().toLowerCase();
+    return existing.some(f => (f.parentFolderId || 0) === parentId && f.name.trim().toLowerCase() === wanted)
+        || planned.some(p => p.parentId === parentId && p.name.trim().toLowerCase() === wanted);
+}
+
+/**
+ * The new folders to create for these folder ids (the ones mods go to), with the new folders
+ * they're inside, parents first.
+ */
+export function plannedFoldersToCreate(planned: PlannedFolder[], usedIds: Iterable<number>): PlannedFolder[] {
+    const byId = new Map(planned.map(p => [p.id, p]));
+    const needed = new Set<number>();
+    const need = (id: number) => {
+        if (id >= 0 || needed.has(id)) return;
+        const folder = byId.get(id);
+        if (!folder) return;
+        needed.add(id);
+        need(folder.parentId);
+    };
+    for (const id of usedIds) need(id);
+    // a folder can only be put inside one made before it, so this order has parents first
+    return planned.filter(p => needed.has(p.id));
+}
+
+/** Folder ids with new folders' temporary ids replaced by the created ones */
+export function remapFolderIds(ids: Record<string, number> | undefined, created: Map<number, number>): Record<string, number> | undefined {
+    if (!ids) return ids;
+    const result: Record<string, number> = {};
+    for (const [key, id] of Object.entries(ids)) {
+        const real = id < 0 ? created.get(id) : id;
+        if (real != null) result[key] = real; // not created: the mod goes to the dialog's folder
+    }
+    return result;
 }

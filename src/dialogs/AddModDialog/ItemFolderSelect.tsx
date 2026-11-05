@@ -1,5 +1,6 @@
 import React from "react";
-import {Select} from "antd";
+import {Button, Divider, Select} from "antd";
+import {FolderAddOutlined} from "@ant-design/icons";
 import {t} from "i18next";
 import type {ItemFolders} from "@/dialogs/AddModDialog/ItemFolders";
 
@@ -37,6 +38,18 @@ export function ItemFolderSelect({folders, itemKey, width = 130}: {
                         return <span title={text}>{text.split(" / ").pop()}</span>;
                     }}
                     style={{width}}
+                    popupRender={folders.newFolder ? (menu) => (
+                        <>
+                            {menu}
+                            <Divider style={{margin: "4px 0"}}/>
+                            <Button type="text" size="small" block icon={<FolderAddOutlined/>}
+                                    style={{justifyContent: "flex-start"}}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => folders.newFolder?.(itemKey)}>
+                                {t("newFolder.menuEntry")}
+                            </Button>
+                        </>
+                    ) : undefined}
                     onChange={(id: number) => folders.set(itemKey, id)}/>
         </span>
     );

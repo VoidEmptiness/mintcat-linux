@@ -1387,5 +1387,17 @@
     "repo.cantRemoveLast": "Browse Mods needs at least one source",
     "repo.hideBuiltInConfirm": "Remove {{name}} from the Browse Mods source list? This only hides it there: mods you added from {{name}} stay in your lists and keep updating. You can add it back under \"Add or remove sources…\".",
     "repo.hiddenBuiltIn": "Removed {{name}} from the Browse Mods sources",
-    "repo.shownBuiltIn": "Added {{name}} back to the Browse Mods sources"
+    "repo.shownBuiltIn": "Added {{name}} back to the Browse Mods sources",
+    "newFolder.title": "New folder",
+    "newFolder.namePlaceholder": "Folder name",
+    "newFolder.putIn": "Put it in",
+    "newFolder.topLevel": "Top level",
+    "newFolder.create": "Create",
+    "newFolder.taken": "There's already a folder called \"{{name}}\" there",
+    "newFolder.newMark": "(new)",
+    "newFolder.button": "New folder",
+    "newFolder.buttonTip": "Make a new folder for the mods you're adding (it's created when you press OK)",
+    "newFolder.menuEntry": "New folder…",
+    "newFolder.created": "Created folder \"{{name}}\"",
+    "newFolder.failed": "Could not create the new folder: {{reason}}"
 }

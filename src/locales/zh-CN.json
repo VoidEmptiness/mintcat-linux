@@ -1387,5 +1387,17 @@
 	"repo.cantRemoveLast": "“浏览 Mod”至少需要一个来源",
 	"repo.hideBuiltInConfirm": "从“浏览 Mod”的来源列表中移除 {{name}}？这只会在那里隐藏它：你从 {{name}} 添加的 Mod 仍保留在列表中并继续更新。可在“添加或移除来源…”中重新添加。",
 	"repo.hiddenBuiltIn": "已从“浏览 Mod”来源中移除 {{name}}",
-	"repo.shownBuiltIn": "已将 {{name}} 重新添加到“浏览 Mod”来源"
+	"repo.shownBuiltIn": "已将 {{name}} 重新添加到“浏览 Mod”来源",
+	"newFolder.title": "新建文件夹",
+	"newFolder.namePlaceholder": "文件夹名称",
+	"newFolder.putIn": "放在",
+	"newFolder.topLevel": "顶层",
+	"newFolder.create": "创建",
+	"newFolder.taken": "那里已有名为“{{name}}”的文件夹",
+	"newFolder.newMark": "（新）",
+	"newFolder.button": "新建文件夹",
+	"newFolder.buttonTip": "为要添加的 Mod 新建一个文件夹（按确定时创建）",
+	"newFolder.menuEntry": "新建文件夹…",
+	"newFolder.created": "已创建文件夹“{{name}}”",
+	"newFolder.failed": "无法创建新文件夹：{{reason}}"
 }

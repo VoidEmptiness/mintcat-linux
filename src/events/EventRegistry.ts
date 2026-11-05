@@ -84,6 +84,8 @@ export interface EventPayloads {
     localFolders?: Record<string, number>;
     onlineFolders?: Record<string, number>;
     subscribedFolders?: Record<string, number>;
+    /** Folders made in the window (negative ids in groupId/the maps); created before adding */
+    newFolders?: { id: number; name: string; parentId: number }[];
   };
 
   /** 添加模组对话框关闭 */

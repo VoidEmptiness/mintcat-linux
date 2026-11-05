@@ -48,4 +48,25 @@ export class DialogProfileService {
     public async getActiveProfileFolderChoices(): Promise<LabeledFolder[]> {
         return foldersInTreeOrder(await this.getActiveProfileFolders());
     }
+
+    /**
+     * Make a folder in the active profile, after the folders already in the same place
+     * (0: top level). Returns its id.
+     */
+    public async createFolderAfterSiblings(name: string, parentId: number): Promise<number> {
+        const profiles = await StorageAPI.getProfiles();
+        const profile = await profiles.getActiveProfile();
+        if (!profile?.id) throw new Error("no active profile");
+        const siblings = (await profiles.getProfileFolders(profile.id)).filter(f => (f.parentFolderId || 0) === parentId);
+        const sortOrder = siblings.reduce((max, f) => Math.max(max, (f.sortOrder ?? 0) + 1), 0);
+        const made = await profiles.createFolder({
+            profileId: profile.id,
+            name,
+            parentFolderId: parentId || null,
+            folderType: "custom",
+            sortOrder,
+        });
+        if (!made?.id) throw new Error("the folder was not saved");
+        return made.id;
+    }
 }

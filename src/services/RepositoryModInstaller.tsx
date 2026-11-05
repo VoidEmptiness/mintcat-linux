@@ -4,7 +4,9 @@
  */
 import React, {useState} from "react";
 import {t} from "i18next";
-import {Checkbox, Flex, message, Select, Tag, Typography} from "antd";
+import {Button, Checkbox, Flex, message, Select, Tag, Typography} from "antd";
+import {FolderAddOutlined} from "@ant-design/icons";
+import {askNewFolder} from "@/dialogs/NewFolderPrompt";
 import {appDataDir, join} from "@tauri-apps/api/path";
 import {mkdir} from "@tauri-apps/plugin-fs";
 import {RepositoryApi, RepositoryFile, RepositoryStore, safeModFileName} from "@/apis/repositories";
@@ -24,7 +26,16 @@ const LAST_SELECTED_GROUP_KEY = 'add-mod-dialog-last-group-id';
 interface FolderOption {
     id: number;
     name: string;
+    parentId?: number;
 }
+
+/** A folder made in the add dialog: created (after its siblings) only when the mod is added */
+interface NewFolder {
+    name: string;
+    parentId: number;
+}
+
+const NEW_FOLDER_ID = -1;
 
 function initialFolder(folders: FolderOption[]): number {
     let cached = 0;
@@ -54,24 +65,45 @@ function AddForm({files, initial, folders, initialFolderId, onChange}: {
     initial: number[];
     folders: FolderOption[];
     initialFolderId: number;
-    onChange: (indexes: number[], folderId: number) => void;
+    onChange: (indexes: number[], folderId: number, newFolder: NewFolder | null) => void;
 }) {
     const [selected, setSelected] = useState<number[]>(initial);
     const [folderId, setFolderId] = useState<number>(initialFolderId);
-    const update = (next: number[], nextFolder = folderId) => {
+    const [newFolder, setNewFolder] = useState<NewFolder | null>(null);
+    const update = (next: number[], nextFolder = folderId, nextNew = newFolder) => {
         setSelected(next);
         setFolderId(nextFolder);
-        onChange(next, nextFolder);
+        setNewFolder(nextNew);
+        onChange(next, nextFolder, nextNew);
+    };
+    const options = [
+        ...folders.map(f => ({value: f.id, label: f.name})),
+        ...(newFolder ? [{value: NEW_FOLDER_ID, label: `${newFolder.name} ${t("newFolder.newMark")}`}] : []),
+    ];
+    const makeFolder = async () => {
+        const choice = await askNewFolder({
+            folders: folders.map(f => ({value: f.id, label: f.name})),
+            zIndex: 1300, // above this dialog
+            taken: (name, parentId) => folders.some(f => (f.parentId ?? 0) === parentId
+                && f.name.split(" / ").pop()!.trim().toLowerCase() === name.trim().toLowerCase()),
+        });
+        if (choice) update(selected, NEW_FOLDER_ID, choice);
     };
     return (
         <Flex vertical gap={10} style={{marginTop: 8}}>
-            {folders.length > 0 &&
-                <Flex vertical gap={4}>
-                    <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.addToFolder")}</Typography.Text>
-                    <Select value={folderId}
-                            onChange={(v) => update(selected, v)}
-                            options={folders.map(f => ({value: f.id, label: f.name}))}/>
-                </Flex>}
+            <Flex vertical gap={4}>
+                <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.addToFolder")}</Typography.Text>
+                <Flex gap={8}>
+                    {options.length > 0 &&
+                        <Select value={folderId}
+                                style={{flex: 1, minWidth: 0}}
+                                showSearch
+                                optionFilterProp="label"
+                                onChange={(v) => update(selected, v)}
+                                options={options}/>}
+                    <Button icon={<FolderAddOutlined/>} onClick={makeFolder}>{t("newFolder.button")}</Button>
+                </Flex>
+            </Flex>
             {files.length > 1
                 ? <Flex vertical gap={6} style={{maxHeight: 320, overflowY: "auto"}}>
                     <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.chooseFilesHint")}</Typography.Text>
@@ -105,28 +137,34 @@ function AddForm({files, initial, folders, initialFolderId, onChange}: {
 
 /** Ask which file(s) to add and into which folder of the mod list */
 async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], folders: FolderOption[])
-    : Promise<{ files: RepositoryFile[]; folderId: number } | null> {
+    : Promise<{ files: RepositoryFile[]; folderId: number; newFolder: NewFolder | null } | null> {
     const initial = files.length === 1 ? [0] : files.map((f, i) => (f.latest ? i : -1)).filter(i => i >= 0);
     let selection = initial;
     let folderId = initialFolder(folders);
+    let newFolder: NewFolder | null = null;
     const ok = await MessageBox.confirm({
         title: t("repo.addTitleFor", {name: modName}),
         icon: null,
         width: 560,
         okText: t("repo.addToList"),
         content: <AddForm files={files} initial={initial} folders={folders} initialFolderId={folderId}
-                          onChange={(s, f) => {
+                          onChange={(s, f, n) => {
                               selection = s;
                               folderId = f;
+                              newFolder = n;
                           }}/>,
     });
     if (!ok) return null;
     try {
-        if (folderId) localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(folderId));
+        if (folderId > 0) localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(folderId));
     } catch {
         // not remembered
     }
-    return {files: [...selection].sort((a, b) => a - b).map(i => files[i]), folderId};
+    return {
+        files: [...selection].sort((a, b) => a - b).map(i => files[i]),
+        folderId,
+        newFolder: folderId === NEW_FOLDER_ID ? newFolder : null,
+    };
 }
 
 export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
@@ -157,7 +195,7 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
     try {
         // in mod-list order, subfolders labelled with their path
         folders = (await new DialogProfileService().getActiveProfileFolderChoices())
-            .map(f => ({id: f.id, name: f.label}));
+            .map(f => ({id: f.id, name: f.label, parentId: f.parentFolderId ?? 0}));
     } catch (error) {
         console.warn('[RepositoryModInstaller] could not read folders', error);
     }
@@ -168,7 +206,21 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<void> {
         return;
     }
     const chosen = choice.files;
-    const folderName = folders.find(f => f.id === choice.folderId)?.name ?? "";
+    let folderName = folders.find(f => f.id === choice.folderId)?.name ?? "";
+    if (choice.newFolder) {
+        // the folder made in the dialog is created now that the mod is being added
+        try {
+            choice.folderId = await new DialogProfileService().createFolderAfterSiblings(choice.newFolder.name, choice.newFolder.parentId);
+            folderName = choice.newFolder.name;
+            localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(choice.folderId));
+            await logActivity('success', t("newFolder.created", {name: folderName}), undefined, 'repository');
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            await logActivity('error', t("newFolder.failed", {reason}), choice.newFolder.name, 'repository');
+            message.error(t("newFolder.failed", {reason}));
+            return;
+        }
+    }
 
     // ~/.local/share/com.mint.cat/repository-mods/<repo>/<post>/<file>
     const baseDir = await join(await appDataDir(), "repository-mods", repo.id, raw.slug);

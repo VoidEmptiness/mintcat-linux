@@ -11,6 +11,11 @@ export function setMessageBoxThemedModal(modal: ReturnType<typeof App.useApp>["m
 
 export class MessageBox {
 
+    /** The themed modal API (for dialogs that update their own buttons) */
+    static api(): Pick<typeof Modal, "confirm"> {
+        return themedModal ?? Modal;
+    }
+
     /** Themed information dialog (closes with OK); returns a handle to close it from code */
     static info(props: ModalFuncProps): { destroy: () => void } {
         return (themedModal ?? Modal).info(props);

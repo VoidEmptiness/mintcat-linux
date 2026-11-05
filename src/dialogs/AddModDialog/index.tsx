@@ -1,24 +1,29 @@
 import React from 'react';
 import {t} from "i18next";
 import {Button, Flex, Form, message, Select, Tabs, Typography} from 'antd';
+import {FolderAddOutlined} from "@ant-design/icons";
 import {emitEvent, emitVoidEvent, listenEvent, type UnlistenFn} from "@/events";
 import {LocalTab} from "@/dialogs/AddModDialog/LocalTab.tsx";
 import {OnlineTab} from "@/dialogs/AddModDialog/OnlineTab.tsx";
 import {SubscribedTab} from "@/dialogs/AddModDialog/SubscribedTab.tsx";
 import {BasePage} from "@/pages/IBasePage.ts";
 import {autoBind} from "@/utils/ReactUtils.ts";
-import {DialogProfileService} from "@/services/DialogProfileService.ts";
+import {DialogProfileService, foldersInTreeOrder, type LabeledFolder} from "@/services/DialogProfileService.ts";
+import {askNewFolder} from "@/dialogs/NewFolderPrompt";
 import {AppInitializer} from "@/core/AppInitializer";
 import {registerIoC} from "@/core/IoCRegistration.ts";
 import {mergeLines} from "@/utils/LocalModPaths";
 import {
     countElsewhere,
+    folderNameTaken,
     type FolderOverrides,
     followNewDefault,
     itemKey,
     type ItemFolders,
     ownFolders,
+    type PlannedFolder,
     setItemFolder,
+    withPlannedFolders,
 } from "@/dialogs/AddModDialog/ItemFolders";
 
 export enum AddModType {
@@ -27,7 +32,7 @@ export enum AddModType {
     SUBSCRIBED = "subscribed"
 }
 
-const LAST_SELECTED_GROUP_KEY = 'add-mod-dialog-last-group-id';
+export const LAST_SELECTED_GROUP_KEY = 'add-mod-dialog-last-group-id';
 
 interface AddModDialogStates {
     addModType?: string;
@@ -42,6 +47,10 @@ interface AddModDialogStates {
     folderOverrides?: FolderOverrides;
     /** Each tab's listed mods (item keys), to count those going elsewhere */
     itemKeys?: Record<string, string[]>;
+    /** The profile's folders as loaded */
+    folderList?: LabeledFolder[];
+    /** Folders made here; created on OK (only those mods go to) */
+    plannedFolders?: PlannedFolder[];
 }
 
 export interface AddModDialogResult {
@@ -55,6 +64,16 @@ export interface AddModDialogResult {
     localFolders?: Record<string, number>;
     onlineFolders?: Record<string, number>;
     subscribedFolders?: Record<string, number>;
+    /** Folders made in the window (negative ids above refer to them) */
+    newFolders?: PlannedFolder[];
+}
+
+/** Folder choices for the pickers: the profile's folders and the new ones, in list order */
+function folderOptions(folderList: LabeledFolder[], planned: PlannedFolder[]): { label: string; value: number }[] {
+    return foldersInTreeOrder(withPlannedFolders(folderList, planned) as LabeledFolder[]).map(f => ({
+        label: f.id < 0 ? `${f.label} ${t("newFolder.newMark")}` : f.label,
+        value: f.id,
+    }));
 }
 
 export class AddModDialog extends BasePage<any, AddModDialogStates> {
@@ -74,7 +93,35 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
             groupOptions: [],
             folderOverrides: {},
             itemKeys: {},
+            folderList: [],
+            plannedFolders: [],
         }
+    }
+
+    private nextPlannedId = -1;
+
+    /**
+     * Make a folder (named and placed in a small dialog) and put the dialog's mods there, or
+     * only the mod with this key
+     */
+    @autoBind
+    private async newFolder(forKey?: string) {
+        const folderList = this.state.folderList ?? [];
+        const planned = this.state.plannedFolders ?? [];
+        const choice = await askNewFolder({
+            folders: this.state.groupOptions ?? [],
+            taken: (name, parentId) => folderNameTaken(folderList, planned, name, parentId),
+        });
+        if (!choice) return;
+        const folder: PlannedFolder = {id: this.nextPlannedId--, name: choice.name, parentId: choice.parentId};
+        const nextPlanned = [...(this.state.plannedFolders ?? []), folder];
+        this.setState({
+            plannedFolders: nextPlanned,
+            groupOptions: folderOptions(this.state.folderList ?? [], nextPlanned),
+        }, () => {
+            if (forKey) this.setItemFolder(forKey, folder.id);
+            else this.onSelectGroupChange(folder.id);
+        });
     }
 
     @autoBind
@@ -113,6 +160,7 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
             overrides: this.state.folderOverrides ?? {},
             set: this.setItemFolder,
             report: this.reportItems,
+            newFolder: this.newFolder,
         };
     }
 
@@ -157,6 +205,7 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
         const groupId = this.state.groupId!;
         await emitEvent('add-mod-dialog-ok', {
             groupId,
+            newFolders: this.state.plannedFolders ?? [],
             addModType: this.state.addModType!,
             list: list,
             modInfoList: modInfoList,
@@ -214,8 +263,8 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
             groupId: value,
             folderOverrides: followNewDefault(prev.folderOverrides ?? {}, value),
         }));
-        // 缓存用户选择的文件夹
-        localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(value));
+        // 缓存用户选择的文件夹 (a new folder is remembered once it's created)
+        if (value > 0) localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(value));
     }
 
     @autoBind
@@ -223,16 +272,15 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
         // in mod-list order, subfolders labelled with their path
         const profileFolderList = await this.dialogProfileService.getActiveProfileFolderChoices();
 
-        const ids = new Set(profileFolderList.map(f => f.id));
         this.setState(prev => {
+            const planned = prev.plannedFolders ?? [];
+            const ids = new Set([...profileFolderList.map(f => f.id), ...planned.map(p => p.id)]);
             // folders deleted meanwhile: their mods go to the dialog's folder again
             const overrides = prev.folderOverrides ?? {};
             const kept = Object.fromEntries(Object.entries(overrides).filter(([, id]) => ids.has(id)));
             return {
-                groupOptions: profileFolderList.map((item) => ({
-                    label: item.label,
-                    value: item.id,
-                })),
+                folderList: profileFolderList,
+                groupOptions: folderOptions(profileFolderList, planned),
                 ...(Object.keys(kept).length !== Object.keys(overrides).length ? {folderOverrides: kept} : {}),
             };
         });
@@ -390,11 +438,19 @@ export class AddModDialog extends BasePage<any, AddModDialogStates> {
                                        </span>
                                        : t("addMod.folderHint"))
                                    : undefined}>
-                        <Flex>
+                        <Flex gap={8}>
                             <Select value={this.state.groupId}
                                     options={this.state.groupOptions}
                                     onChange={this.onSelectGroupChange}
+                                    showSearch
+                                    optionFilterProp="label"
+                                    style={{flex: 1, minWidth: 0}}
                             />
+                            <Button icon={<FolderAddOutlined/>}
+                                    title={t("newFolder.buttonTip")}
+                                    onClick={() => this.newFolder()}>
+                                {t("newFolder.button")}
+                            </Button>
                         </Flex>
                     </Form.Item>
                 </Form>

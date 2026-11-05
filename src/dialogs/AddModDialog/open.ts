@@ -1,5 +1,5 @@
 import {t} from "i18next";
-import {emitVoidEvent, onceEvent} from "@/events";
+import {emitVoidEvent, onceEvent, type EventPayload} from "@/events";
 import {ModioApi} from "@/apis/modio";
 import {ModcatApi} from "@/apis/modcat";
 import {NexusModsApi} from "@/apis/nexusmods";
@@ -9,7 +9,7 @@ import { IoC } from "@/core/IoC.ts";
 import {emitTo} from "@tauri-apps/api/event";
 import {WebviewWindow} from "@tauri-apps/api/webviewWindow";
 import {ClipboardApi} from "@/apis/ClipboardApi.ts";
-import {AddModType} from "@/dialogs/AddModDialog/index.tsx";
+import {AddModType, LAST_SELECTED_GROUP_KEY} from "@/dialogs/AddModDialog/index.tsx";
 import StatusBar from "@/components/StatusBar.tsx";
 import {StorageAPI} from "@/storage";
 import {asyncPoolAll} from "@/utils/AsyncPool";
@@ -23,7 +23,7 @@ import {BackendRuntimeApi} from "@/apis/BackendRuntimeApi";
 import {isModArchivePath, parseLocalPathLine, splitLines} from "@/utils/LocalModPaths";
 import {ActivityLog, logActivity} from "@/services/ActivityLog";
 import {DialogProfileService} from "@/services/DialogProfileService.ts";
-import {folderFor} from "@/dialogs/AddModDialog/ItemFolders";
+import {folderFor, plannedFoldersToCreate, remapFolderIds} from "@/dialogs/AddModDialog/ItemFolders";
 import type {ModInfo} from "@/apis/modio/ModInfo.ts";
 
 let windowInstance: WebviewWindow;
@@ -101,6 +101,8 @@ export async function openWindow(addModType: string = AddModType.LOCAL,
         let addProblems = 0;
         let addExists = 0;
         let addTotal = 0;
+        // Folders made in the window: create the ones mods go to, then use their real ids
+        await createNewFolders(result);
         // Each mod goes to the folder picked for it, else the dialog's folder
         const folders = await folderLabels();
         const validIds = new Set(folders.keys());
@@ -191,6 +193,49 @@ type AddOutcome = { problems: number; exists: number };
 type Placed = { folderId: number; folderName?: string };
 
 /** The active profile's folders: id → name as the folder lists show it ("Core / Sub") */
+/**
+ * Create the folders made in the Add Mod window that mods go to (and new folders those are in),
+ * after their existing siblings, and replace their temporary ids in the result
+ */
+async function createNewFolders(result: EventPayload<'add-mod-dialog-ok'>): Promise<void> {
+    const planned = result.newFolders ?? [];
+    if (planned.length === 0) return;
+    const used = new Set<number>([result.groupId,
+        ...Object.values(result.localFolders ?? {}),
+        ...Object.values(result.onlineFolders ?? {}),
+        ...Object.values(result.subscribedFolders ?? {})]);
+    const created = new Map<number, number>();
+    const service = new DialogProfileService();
+    for (const folder of plannedFoldersToCreate(planned, used)) {
+        const parentId = folder.parentId < 0 ? created.get(folder.parentId) : folder.parentId;
+        if (parentId == null) continue; // its parent couldn't be made
+        try {
+            created.set(folder.id, await service.createFolderAfterSiblings(folder.name, parentId));
+            await logActivity('success', t("newFolder.created", {name: folder.name}), undefined, 'add-mod');
+        } catch (error) {
+            console.error('[AddModDialog] Could not create a new folder', error);
+            await logActivity('error', t("newFolder.failed", {reason: errorText(error)}), folder.name, 'add-mod');
+        }
+    }
+    if (result.groupId < 0) {
+        const real = created.get(result.groupId);
+        if (real != null) {
+            result.groupId = real;
+            try {
+                localStorage.setItem(LAST_SELECTED_GROUP_KEY, String(real));
+            } catch {
+                // not remembered
+            }
+        } else {
+            // the folder couldn't be made: the first folder of the list instead
+            result.groupId = (await folderLabels()).keys().next().value ?? 0;
+        }
+    }
+    result.localFolders = remapFolderIds(result.localFolders, created);
+    result.onlineFolders = remapFolderIds(result.onlineFolders, created);
+    result.subscribedFolders = remapFolderIds(result.subscribedFolders, created);
+}
+
 async function folderLabels(): Promise<Map<number, string>> {
     try {
         const choices = await new DialogProfileService().getActiveProfileFolderChoices();
