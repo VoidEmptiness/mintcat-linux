@@ -86,7 +86,6 @@ import { isUe4ssEnabled } from "@/utils/Ue4ssSetting";
 import { perfMark, perfUntilPainted } from "@/utils/perfTrace";
 import { fileNameOf, findMovedSiblings, localModPath, parentDir, relocateLocalMod } from "@/services/LocalModRelocation";
 import { ModSupport } from "@/services/ModSupport";
-import { GameVersions, newestGameVersion } from "@/services/ListDisplay";
 import { ModListColumnsHeader } from "./ModStatusIcons";
 import { backfillNexusCategories } from "@/services/NexusCategories";
 
@@ -962,10 +961,6 @@ export class HomePage extends BasePage<any, ModListPageState> {
         resetExpandedKeys: boolean = false
     ) {
         this.lastTreeSignature = "";
-        // the newest game version mod.io mods are tagged for (older ones are marked)
-        GameVersions.setLatest(newestGameVersion(allMods
-            .filter(m => m.sourceType === ModSourceType.Modio)
-            .flatMap(m => m.version?.availableVersions ?? [])));
 
         // TreeViewConverter now accepts CompleteModData[] and ProfileModData[]
         const converter = new TreeViewConverter(allMods, profileMods);
@@ -1360,10 +1355,6 @@ export class HomePage extends BasePage<any, ModListPageState> {
             .map(m => ({modId: m.modId!, platformId: m.platformId, nameId: m.nameId, sourceType: m.sourceType, url: m.url})));
         // Link local mods to their repository (Pak Hub) posts in the background, by file name
         RepositoryUpdates.scheduleAutoLink(allMods.filter(m => inProfile.has(m.modId!)));
-        // the newest game version mod.io mods are tagged for (older ones are marked)
-        GameVersions.setLatest(newestGameVersion(allMods
-            .filter(m => m.sourceType === ModSourceType.Modio)
-            .flatMap(m => m.version?.availableVersions ?? [])));
 
 
         // TreeViewConverter now accepts CompleteModData[] and ProfileModData[]

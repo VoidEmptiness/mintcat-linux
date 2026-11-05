@@ -1,3 +1,5 @@
+import {GameVersions, newestGameVersion} from "@/services/ListDisplay";
+import {ModSourceType} from "@/models/mod/types";
 import {TreeProps} from "antd";
 import {ProfileTreeItem, ProfileTreeType} from "@/storage/db/Schema.ts";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
@@ -19,6 +21,20 @@ const TAG_FILTERS = new Set(["RequiredByAll", "Optional", "Audio", "Framework", 
  */
 export const FOLDER_COLOR_PREFIX = "path:";
 
+/** Stored version lists are arrays, but older records may hold the JSON text */
+function versionList(value: unknown): string[] {
+    if (Array.isArray(value)) return value.map(String);
+    if (typeof value === "string" && value.trim().startsWith("[")) {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed.map(String) : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
 export class TreeViewConverter {
 
     public static filterList?: string[] = [];
@@ -39,6 +55,15 @@ export class TreeViewConverter {
     public constructor(modList: CompleteModData[], profileModList?: ProfileModData[]) {
         this.modList = modList;
         this.profileModList = profileModList;
+        // every list build (refresh, search, moves) knows the newest game version mod.io mods are tagged for
+        const tagged = modList
+            .filter(m => m.sourceType === ModSourceType.Modio)
+            .flatMap(m => versionList(m.version?.availableVersions));
+        const latest = newestGameVersion(tagged);
+        if (latest !== GameVersions.latest()) {
+            console.info(`[GameVersions] newest game version among mod.io mods: ${latest ?? 'none'} (${tagged.length} tags)`);
+        }
+        GameVersions.setLatest(latest);
     }
 
     // ====================================
@@ -155,7 +180,7 @@ export class TreeViewConverter {
             enabled: isEnabled,
             sourceType: modItem.sourceType,
             approval: modItem.approvalStatus,
-            versions: modItem.version?.availableVersions || [],
+            versions: versionList(modItem.version?.availableVersions),
             fileVersion: modItem.version?.currentVersion || "-",
             usedVersion: profileMod?.usedVersion || "",  // Use profile-specific used version
             downloadProgress: modItem.download?.downloadProgress || 100,
