@@ -39,6 +39,29 @@ function CopyNameForm({initial, onChange}: { initial: string; onChange: (value: 
 
 type InputCallback = (name: string) => void;
 
+/**
+ * Enter in a name field: run the action (which asks to confirm) once the key is let go. Opened
+ * while Enter was still down, the confirmation got that same Enter and closed again at once.
+ */
+function onEnterReleased(action: () => void) {
+    return (e: React.KeyboardEvent) => {
+        e.preventDefault();
+        let done = false;
+        const run = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener('keyup', onUp, true);
+            action();
+        };
+        const onUp = (ev: KeyboardEvent) => {
+            if (ev.key === 'Enter') setTimeout(run, 0);
+        };
+        window.addEventListener('keyup', onUp, true);
+        // no key-up seen (e.g. focus moved): don't wait forever
+        setTimeout(run, 600);
+    };
+}
+
 class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
 
     private callback: InputCallback;
@@ -305,7 +328,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                          value={this.state.newProfileName}
                                          placeholder={t("Input New Profile")}
                                          onChange={this.handleProfileInputChange}
-                                         onPressEnter={this.handleAdd}
+                                         onPressEnter={onEnterReleased(() => void this.handleAdd())}
                                          autoComplete={"off"}
                                   />
                                   <Tooltip title={t("profile.addTip")}>
@@ -328,7 +351,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                                         size="small"
                                                         value={this.state.editingValue}
                                                         onChange={(e) => this.setState({editingValue: e.target.value})}
-                                                        onPressEnter={() => this.handleRename(item, this.state.editingValue)}
+                                                        onPressEnter={onEnterReleased(() => void this.handleRename(item, this.state.editingValue))}
                                                         className="w-200"
                                                         autoFocus
                                                         autoComplete={"off"}
