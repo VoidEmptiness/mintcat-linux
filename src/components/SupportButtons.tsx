@@ -36,8 +36,8 @@ export function NexusSupportButtons({domain, modId, name, modVersion}: {
     name: string;
     modVersion?: string;
 }) {
-    useModSupport();
-    const state = ModSupport.nexusState(domain, modId);
+    const version = useModSupport();
+    const state = ModSupport.nexusState(domain, modId, version);
     const endorsed = state.endorsement === 'Endorsed';
     const needKey = !state.available ? ` ${t('support.needNexusKeyShort')}` : '';
     return (
@@ -61,8 +61,8 @@ export function NexusSupportButtons({domain, modId, name, modVersion}: {
 }
 
 export function ModioSupportButtons({modId, name}: { modId: number; name: string }) {
-    useModSupport();
-    const state = ModSupport.modioState(modId);
+    const version = useModSupport();
+    const state = ModSupport.modioState(modId, version);
     const needToken = !state.available ? ` ${t('support.needModioTokenShort')}` : '';
     return (
         <Space size={0} onClick={stop} onContextMenu={stop} className="support-buttons">
@@ -92,10 +92,11 @@ export function ModioSupportButtons({modId, name}: { modId: number; name: string
 }
 
 /** Right-click menu entries for a mod of the list (none for other sources) */
-export function supportMenuItems(kind: 'nexus' | 'modio' | undefined, domain: string, modId: number | undefined): MenuProps['items'] {
+export function supportMenuItems(kind: 'nexus' | 'modio' | undefined, domain: string, modId: number | undefined,
+                                 version: number): MenuProps['items'] {
     if (!kind || !modId) return [];
     if (kind === 'nexus') {
-        const state = ModSupport.nexusState(domain, modId);
+        const state = ModSupport.nexusState(domain, modId, version);
         const endorsed = state.endorsement === 'Endorsed';
         return [{
             key: 'support_menu', label: t('support.nexusMenu'), icon: <HeartOutlined/>,
@@ -109,7 +110,7 @@ export function supportMenuItems(kind: 'nexus' | 'modio' | undefined, domain: st
             ],
         }];
     }
-    const state = ModSupport.modioState(modId);
+    const state = ModSupport.modioState(modId, version);
     return [{
         key: 'support_menu', label: t('support.modioMenu'), icon: <LikeOutlined/>,
         children: [

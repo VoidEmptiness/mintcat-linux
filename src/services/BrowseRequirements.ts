@@ -137,7 +137,7 @@ export function authorText(detail: RepositoryModDetail): string {
  * posts (reads its post list once per session) so they can be added too.
  */
 export async function pakhubPlan(item: SearchResultItem, detail: RepositoryModDetail, index: ListedIndex,
-                                 findLinkedPosts: boolean): Promise<RequirementPlan | null> {
+                                 findLinkedPosts: LinkedPostLookup): Promise<RequirementPlan | null> {
     const raw = item.rawData as RepositoryResultData | undefined;
     if (!raw) return null;
     const analysis = analyzePostText(authorText(detail));
@@ -146,7 +146,9 @@ export async function pakhubPlan(item: SearchResultItem, detail: RepositoryModDe
         // a link to the post's own message
         .filter(req => !(req.discordMessageId && messageIdSuffix(req.discordMessageId) === ownSuffix));
 
-    const discordIds = requirements.filter(r => r.discordMessageId).map(r => r.discordMessageId!);
+    const discordIds = requirements
+        .filter(r => r.discordMessageId && (findLinkedPosts === 'all' || r.likely))
+        .map(r => r.discordMessageId!);
     if (findLinkedPosts && discordIds.length > 0) {
         try {
             const posts = await findPostsByMessageIds(raw.baseUrl, discordIds);
@@ -177,9 +179,15 @@ export async function pakhubPlan(item: SearchResultItem, detail: RepositoryModDe
     };
 }
 
+/**
+ * Discord links looked up among the repository's posts: all of them (asking before adding),
+ * only the ones the mod needs (cards: fewer requests), or none
+ */
+export type LinkedPostLookup = 'all' | 'likely' | false;
+
 /** What a result needs (for the card); Pak Hub posts need their detail */
 export async function planFor(item: SearchResultItem, index: ListedIndex, detail?: RepositoryModDetail,
-                              findLinkedPosts = false): Promise<RequirementPlan | null> {
+                              findLinkedPosts: LinkedPostLookup = false): Promise<RequirementPlan | null> {
     if (isRepositorySource(item.source)) return detail ? pakhubPlan(item, detail, index, findLinkedPosts) : null;
     if (item.source === SearchSource.NEXUSMODS) return nexusPlan(item, index);
     if (item.source === SearchSource.MODIO) return modioPlan(item, index);
@@ -189,6 +197,9 @@ export async function planFor(item: SearchResultItem, index: ListedIndex, detail
 /** Worth asking before adding: something it needs (or the author suggests) isn't in your list, or load order / conflicts */
 export function worthAsking(plan: RequirementPlan | null): boolean {
     if (!plan || plan.source === 'modio') return false;
-    const missing = plan.requirements.some(r => !r.listed?.inActiveProfile && (r.likely || r.addable));
+    // Nexus: anything the page lists but DLC (tools outside Nexus get an "Open page");
+    // Pak Hub: what the author says it needs (mods only mentioned don't ask on their own)
+    const missing = plan.requirements.some(r => !r.listed?.inActiveProfile
+        && (plan.source === 'nexus' ? r.source !== 'dlc' : r.likely));
     return missing || plan.orderHints.length > 0 || plan.notes.some(n => /\b(not compatible|incompatible|conflict|disable)\b/i.test(n));
 }

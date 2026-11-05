@@ -69,7 +69,9 @@ function PromptBody({plan, initial, onChange}: {
     const needed = plan.requirements.filter(r => r.likely);
     const mentioned = plan.requirements.filter(r => !r.likely);
     const conflicts = plan.notes.filter(n => /\b(not compatible|incompatible|conflicts?|disable)\b/i.test(n));
-    const otherNotes = plan.notes.filter(n => !conflicts.includes(n));
+    // sentences already shown with a requirement or a load-order hint aren't repeated
+    const shown = new Set([...plan.requirements.map(r => r.sentence), ...plan.orderHints.map(h => h.sentence)].filter(Boolean));
+    const otherNotes = plan.notes.filter(n => !conflicts.includes(n) && !shown.has(n));
     return (
         <Flex vertical gap={12} style={{marginTop: 8, maxHeight: '60vh', overflow: 'auto', paddingRight: 4}}>
             {needed.length > 0 && (

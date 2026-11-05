@@ -94,6 +94,10 @@ export function LogPanel() {
             message.error(`${t("log.readFailed")}: ${error}`);
         }
     };
+    // the list of earlier launches is ready when the picker opens
+    useEffect(() => {
+        if (open) void loadSessions();
+    }, [open]);
     const [showErrors, setShowErrors] = useState(false);
     const [showWarnings, setShowWarnings] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -187,7 +191,7 @@ export function LogPanel() {
                 {visible.length === 0
                     ? <div style={{opacity: 0.6}}>
                         {viewingSession && !viewingSession.files.some(f => f.kind === 'activity')
-                            ? t("log.onlyFullLog")
+                            ? t(viewingSession.stamp === LEGACY_STAMP ? "log.legacyOnlyFullLog" : "log.onlyFullLog")
                             : t((showErrors || showWarnings) ? "log.noProblems" : "log.empty")}
                     </div>
                     : visible.map(entry => <EntryLine key={entry.id} entry={entry} colors={colors}/>)}
@@ -196,6 +200,7 @@ export function LogPanel() {
                 <Tooltip title={t("log.launchTip")} mouseEnterDelay={0.5}>
                     <Select size="small"
                             value={viewing}
+                            title=""
                             style={{width: 210}}
                             popupMatchSelectWidth={false}
                             onOpenChange={(isOpen) => {
@@ -203,8 +208,9 @@ export function LogPanel() {
                             }}
                             onChange={(value: string) => void showSession(value)}
                             options={[
-                                {value: CURRENT, label: t("log.thisLaunch")},
-                                ...sessions.filter(s => !s.current).map(s => ({value: s.stamp, label: sessionLabel(s)})),
+                                // labels as elements: no native tooltip repeating the text
+                                {value: CURRENT, label: <span>{t("log.thisLaunch")}</span>},
+                                ...sessions.filter(s => !s.current).map(s => ({value: s.stamp, label: <span>{sessionLabel(s)}</span>})),
                             ]}/>
                 </Tooltip>
                 <DotToggle label={t("log.errors")} color={token.colorError} count={errorCount}

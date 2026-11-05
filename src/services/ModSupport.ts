@@ -70,6 +70,8 @@ export interface ModioSupportState {
 }
 
 let nexusKeySaved = false;
+let lastRefresh = 0;
+let refreshing: Promise<void> | null = null;
 let modioTokenSaved = false;
 
 async function loadNexus(force: boolean): Promise<void> {
@@ -195,16 +197,26 @@ export const ModSupport = {
     },
 
     /** A Nexus API key or mod.io token is saved (the mod list then shows the support columns) */
-    anyAccount(): boolean {
+    anyAccount(_version?: number): boolean {
         return nexusKeySaved || modioTokenSaved;
     },
 
-    /** Read the account lists if they're missing or old (no-op without key / token) */
+    /**
+     * Read the account lists if they're missing or old (no-op without key / token). Every card
+     * and row asks; the key / token is only looked up again after a few seconds.
+     */
     async refresh(force = false): Promise<void> {
-        await Promise.all([loadNexus(force), loadModio(force)]);
+        if (!force && refreshing) return refreshing;
+        if (!force && Date.now() - lastRefresh < 5000) return;
+        lastRefresh = Date.now();
+        refreshing = Promise.all([loadNexus(force), loadModio(force)]).then(() => undefined).finally(() => {
+            refreshing = null;
+        });
+        return refreshing;
     },
 
-    nexusState(domain: string, modId: number): NexusSupportState {
+    /** `_version` (useSyncExternalStore) makes React Compiler-memoized callers read it again */
+    nexusState(domain: string, modId: number, _version?: number): NexusSupportState {
         const key = nexusKey(domain, modId);
         return {
             known: !!nexus,
@@ -215,7 +227,7 @@ export const ModSupport = {
         };
     },
 
-    modioState(modId: number): ModioSupportState {
+    modioState(modId: number, _version?: number): ModioSupportState {
         return {
             known: !!modio,
             available: modioTokenSaved,

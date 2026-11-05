@@ -1586,5 +1586,9 @@
     "log.readFailed": "Couldn't read that log",
     "log.openFullLog": "Full log",
     "log.noFullLog": "There's no full log file for this launch.",
-    "log.onlyFullLog": "Only the full log file was kept for this launch. Click Full log to open it."
+    "log.onlyFullLog": "Only the full log file was kept for this launch. Click Full log to open it.",
+    "log.legacyOnlyFullLog": "Builds before this one kept everything in one big log file. Click Full log to open it.",
+    "req.hostOnly": "Host only",
+    "req.clientSide": "Client side",
+    "req.everyone": "Everyone needs it"
 }

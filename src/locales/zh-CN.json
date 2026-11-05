@@ -1586,5 +1586,9 @@
 	"log.readFailed": "无法读取该日志",
 	"log.openFullLog": "完整日志",
 	"log.noFullLog": "本次启动没有完整日志文件。",
-	"log.onlyFullLog": "这次启动只保留了完整日志文件。点击“完整日志”打开。"
+	"log.onlyFullLog": "这次启动只保留了完整日志文件。点击“完整日志”打开。",
+	"log.legacyOnlyFullLog": "之前的版本把所有内容保存在一个大日志文件中。点击“完整日志”打开。",
+	"req.hostOnly": "仅房主",
+	"req.clientSide": "客户端",
+	"req.everyone": "所有人都需要"
 }

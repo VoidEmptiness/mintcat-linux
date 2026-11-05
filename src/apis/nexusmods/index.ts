@@ -370,8 +370,6 @@ export class NexusModsApi {
                                 }
                             }
                         }
-                        viewerTracked
-                        viewerEndorsed
                     }
                     totalCount
                     nodesCount
@@ -637,11 +635,22 @@ export class NexusModsApi {
     }
 
     private static async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-        const response = await NexusModsApi.requestJson<GraphqlResponse<T>>(NEXUSMODS_GRAPHQL_URL, {
+        const send = (withoutKey: boolean) => NexusModsApi.requestJson<GraphqlResponse<T>>(NEXUSMODS_GRAPHQL_URL, {
             method: 'POST',
             body: JSON.stringify({ query, variables }),
             isFullUrl: true,
+            withoutKey,
         });
+        let response: GraphqlResponse<T>;
+        try {
+            response = await send(false);
+        } catch (error) {
+            // Searching works without a key: a key Nexus rejects (expired, mistyped) shouldn't
+            // leave Browse Mods empty
+            if (!NexusModsApi.isAuthenticationRequiredError(error) || !(await NexusModsApi.getApiKey())) throw error;
+            console.warn('[NexusModsApi] API key not accepted; searching without it');
+            response = await send(true);
+        }
         if (response.errors?.length) {
             const errorMessage = response.errors.map((error) => error.message).filter(Boolean).join('; ') || 'Nexus Mods GraphQL error';
             console.warn('[NexusModsApi] GraphQL errors:', errorMessage);
@@ -659,11 +668,14 @@ export class NexusModsApi {
             form?: Record<string, string>;
             /** Statuses that count as done (e.g. 404 when removing something that isn't there) */
             allowStatus?: number[];
+            /** Don't send the API key (public data) */
+            withoutKey?: boolean;
             isFullUrl?: boolean;
             parseAsResponse?: boolean;
         } = {},
     ): Promise<T> {
         const headers = await NexusModsApi.getHeaders();
+        if (options.withoutKey) delete headers.apikey;
         let body = options.body;
         if (options.form) {
             headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -694,7 +706,9 @@ export class NexusModsApi {
             }
             throw new Error(`Nexus Mods API ${response.status}: ${message || response.statusText}`);
         }
-        return await response.json() as T;
+        // some write calls answer with an empty body
+        const text = await response.text();
+        return (text.trim() ? JSON.parse(text) : {}) as T;
     }
 
     private static async getHeaders(): Promise<Record<string, string>> {

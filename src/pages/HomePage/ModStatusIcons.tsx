@@ -21,23 +21,27 @@ import {ModListAppearance} from "@/services/ModListAppearance";
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
 /** Which flag cells the columns view shows (the same for every row and the header) */
-export function useFlagColumns(): { notes: boolean; support: boolean; columns: boolean } {
-    useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
-    useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+export function useFlagColumns(): { notes: boolean; support: boolean; columns: boolean; notesVersion: number; supportVersion: number } {
+    // the versions go into every read, or React Compiler would keep the first answer
+    const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
+    const supportVersion = useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
     const look = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version));
-    return {notes: ModNotes.hasAny(), support: ModSupport.anyAccount(), columns: look.columns};
+    return {
+        notes: ModNotes.hasAny(notesVersion), support: ModSupport.anyAccount(supportVersion), columns: look.columns,
+        notesVersion, supportVersion,
+    };
 }
 
 export function ModStatusIcons({nodeData}: { nodeData: any }) {
-    const {notes: showNotes, support: showSupport, columns} = useFlagColumns();
+    const {notes: showNotes, support: showSupport, columns, notesVersion, supportVersion} = useFlagColumns();
     if (!showNotes && !showSupport) return null;
 
     const name = nodeData.title || nodeData.nameId || "";
-    const note = ModNotes.get(nodeData.modId);
+    const note = ModNotes.get(nodeData.modId, notesVersion);
     const isNexus = nodeData.sourceType === NEXUSMODS_PLATFORM && nodeData.platformId;
     const isModio = nodeData.sourceType === ModSourceType.Modio && nodeData.platformId;
-    const nexus = isNexus ? ModSupport.nexusState(nexusDomainOf(nodeData.url), nodeData.platformId) : undefined;
-    const modio = isModio ? ModSupport.modioState(nodeData.platformId) : undefined;
+    const nexus = isNexus ? ModSupport.nexusState(nexusDomainOf(nodeData.url), nodeData.platformId, supportVersion) : undefined;
+    const modio = isModio ? ModSupport.modioState(nodeData.platformId, supportVersion) : undefined;
 
     let liked: React.ReactNode = null;
     let following: React.ReactNode = null;

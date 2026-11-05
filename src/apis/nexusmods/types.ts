@@ -60,9 +60,6 @@ export interface NexusModsModNode {
     name: string;
     /** What the mod's page lists as needed */
     modRequirements?: NexusModsModRequirements;
-    /** With an API key: the key's account tracks / endorsed it */
-    viewerTracked?: boolean;
-    viewerEndorsed?: boolean;
     summary?: string;
     description?: string;
     author?: string;

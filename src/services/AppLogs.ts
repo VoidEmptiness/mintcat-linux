@@ -115,6 +115,10 @@ async function flush(): Promise<void> {
     const lines = pending.join("\n");
     pending = [];
     try {
+        if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+        }
         await invoke("append_activity_log", {lines});
     } catch (error) {
         console.warn("[AppLogs] could not save log entries", error);
@@ -130,7 +134,8 @@ export function saveActivityEntry(entry: ActivityEntry): void {
         message: redactForLog(entry.message),
         detail: redactForLog(entry.detail),
     }));
-    if (pending.length > 500) {
+    // problems are written straight away (the app may be about to go down)
+    if (pending.length > 500 || entry.level === "error") {
         void flush();
         return;
     }

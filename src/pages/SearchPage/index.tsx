@@ -42,7 +42,8 @@ import type {NexusModsModNode} from '@/apis/nexusmods/types';
 import {buildListedIndex, ListedIndex, type ListedKey} from '@/services/ListedMods';
 import {listenEvent} from '@/events';
 import type {RepositoryResultData} from '@/apis/search';
-import {loadRepositoryDetail} from '@/apis/repositories/details';
+import {loadRepositoryDetail, repositoryTitleFromFiles} from '@/apis/repositories/details';
+import type {RepositoryModDetail} from '@/apis/repositories';
 import {planFor, worthAsking, type RequirementPlan, type ResolvedRequirement} from '@/services/BrowseRequirements';
 import {askRequirements} from '@/dialogs/RequirementsPrompt';
 import './styles.css';
@@ -349,6 +350,7 @@ export function SearchPage() {
             // Mods it needs (Nexus page requirements; what a Pak Hub post names): ask which to add too
             let extras: ResolvedRequirement[] = [];
             let plan: RequirementPlan | null = null;
+            let detailForName: RepositoryModDetail | undefined;
             try {
                 const detail = isRepositorySource(item.source)
                     ? await (async () => {
@@ -356,20 +358,24 @@ export function SearchPage() {
                         return raw ? await loadRepositoryDetail(raw.baseUrl, raw.slug) : undefined;
                     })()
                     : undefined;
-                plan = await planFor(item, await buildListedIndex(), detail, true);
+                detailForName = detail;
+                plan = await planFor(item, await buildListedIndex(), detail, 'all');
             } catch (error) {
                 console.warn('[SearchPage] requirements not checked', error);
             }
             if (worthAsking(plan)) {
-                const answer = await askRequirements(item.nameTrans || item.name, plan!);
+                // the card's title: a Pak Hub post's file names when it has them
+                const shownName = item.nameTrans || (isRepositorySource(item.source) && detailForName
+                    ? repositoryTitleFromFiles(detailForName) : undefined) || item.name;
+                const answer = await askRequirements(shownName, plan!);
                 if (answer === null) return;
                 extras = answer;
             }
 
             const links: string[] = [];
             if (isRepositorySource(item.source)) {
-                const added = await addRepositoryMod(item);
-                if (!added && extras.length === 0) return;
+                // its files chosen and added first; cancelled there: nothing else is added either
+                if (!await addRepositoryMod(item)) return;
             } else if (item.source === SearchSource.NEXUSMODS) {
                 const node = item.rawData as NexusModsModNode | undefined;
                 const gameId = node?.gameId || Number(node?.game?.id) || undefined;
@@ -507,6 +513,7 @@ export function SearchPage() {
                     {/* 网站选择下拉框 */}
                     <Select
                         value={state?.currentSource}
+                        title=""
                         options={sourceOptions}
                         onChange={handleSourceChange}
                         disabled={isLoading}
@@ -549,6 +556,7 @@ export function SearchPage() {
                                 ?? currentSortOptions[0].value}
                             options={currentSortOptions.map((o) => ({value: o.value, label: t(o.labelKey)}))}
                             onChange={handleSortChange}
+                            title=""
                             disabled={isLoading}
                             aria-label={t('sort.title')}
                             style={{width: 172}}

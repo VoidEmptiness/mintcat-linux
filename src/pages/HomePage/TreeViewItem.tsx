@@ -1430,10 +1430,11 @@ function TreeViewItemInner({
     // Menu shows Link/Unlink depending on the mod's repository link
     const repoLinkVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
     // Note / support entries follow the saved note and the accounts' lists
-    useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
-    useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    // (the versions go into the reads, or React Compiler would keep the first answer)
+    const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
+    const supportVersion = useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
     const columnsView = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version)).columns;
-    const hasNote = !!ModNotes.get(nodeData.modId);
+    const hasNote = !!ModNotes.get(nodeData.modId, notesVersion);
     const supportKind = nodeData.platformId
         ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
             : nodeData.sourceType === ModSourceType.Modio ? 'modio' as const : undefined
@@ -1485,7 +1486,7 @@ function TreeViewItemInner({
         {type: 'divider' as const},
         {label: t(hasNote ? 'notes.editMenu' : 'notes.addMenu'), key: 'note_edit', icon: <FileTextOutlined />},
         ...(hasNote ? [{label: t('notes.removeMenu'), key: 'note_remove', icon: <DeleteOutlined />}] : []),
-        ...(supportMenuItems(supportKind, nexusDomain, nodeData.platformId) ?? []),
+        ...(supportMenuItems(supportKind, nexusDomain, nodeData.platformId, supportVersion) ?? []),
         ...(nodeData.sourceType === ModSourceType.Local ? [
             {type: 'divider' as const},
             {

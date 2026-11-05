@@ -4,7 +4,7 @@
  */
 import React, {useEffect, useState} from "react";
 import {Popover, Tag, Tooltip, Typography} from "antd";
-import {CheckCircleFilled, ExportOutlined, OrderedListOutlined, ProfileOutlined, WarningOutlined} from "@ant-design/icons";
+import {CheckCircleFilled, ExportOutlined, OrderedListOutlined, ProfileOutlined, TeamOutlined, WarningOutlined} from "@ant-design/icons";
 import {t} from "i18next";
 import {open} from "@tauri-apps/plugin-shell";
 import type {SearchResultItem} from "@/apis/search";
@@ -18,7 +18,7 @@ export function useRequirementPlan(item: SearchResultItem, index: ListedIndex, d
     const [plan, setPlan] = useState<RequirementPlan | null>(null);
     useEffect(() => {
         let alive = true;
-        planFor(item, index, detail, true)
+        planFor(item, index, detail, 'likely')
             .then(result => alive && setPlan(result))
             .catch(() => alive && setPlan(null));
         return () => {
@@ -79,6 +79,18 @@ function RequirementTag({req}: { req: ResolvedRequirement }) {
     );
 }
 
+/** "Host only." / "client side" / "Required by all": who has to have the mod */
+export function whoNeedsIt(notes: string[]): { key: string; sentence: string } | undefined {
+    for (const sentence of notes) {
+        if (/\bhost[ -]?only\b|\bonly (the )?host\b|\bonly host\b/i.test(sentence)) return {key: 'req.hostOnly', sentence};
+        if (/\bclient[ -]?(side|only)\b|\bonly (the )?clients?\b/i.test(sentence)) return {key: 'req.clientSide', sentence};
+        if (/\brequired by (all|everyone)\b|\b(everyone|all players) (needs?|must have)\b|\bneeds? to be installed by (all|everyone)\b/i.test(sentence)) {
+            return {key: 'req.everyone', sentence};
+        }
+    }
+    return undefined;
+}
+
 export function orderHintText(hint: ResolvedOrderHint): string {
     const target = hint.match ?? hint.target;
     return hint.direction === 'above' ? t('req.loadAbove', {name: target}) : t('req.loadBelow', {name: target});
@@ -88,6 +100,7 @@ export function CardRequirements({plan}: { plan: RequirementPlan | null }) {
     if (!plan) return null;
     const needs = plan.requirements.filter(r => r.likely || plan.source !== 'pakhub');
     const conflicts = plan.notes.filter(n => /\b(not compatible|incompatible|conflicts?|disable)\b/i.test(n));
+    const who = whoNeedsIt(plan.notes);
     if (needs.length === 0 && plan.orderHints.length === 0 && plan.notes.length === 0) return null;
     return (
         <div className="search-result-card-extra" onClick={stop} onContextMenu={stop}>
@@ -104,6 +117,11 @@ export function CardRequirements({plan}: { plan: RequirementPlan | null }) {
                     <Tag icon={<OrderedListOutlined/>} color={hint.match ? 'gold' : undefined}>{orderHintText(hint)}</Tag>
                 </Tooltip>
             ))}
+            {who && (
+                <Tooltip title={`“${who.sentence}”`}>
+                    <Tag icon={<TeamOutlined/>}>{t(who.key)}</Tag>
+                </Tooltip>
+            )}
             {conflicts.length > 0 && (
                 <Tooltip title={conflicts.map(c => `“${c}”`).join("\n")}>
                     <Tag icon={<WarningOutlined/>} color="warning">{t('req.conflictNote')}</Tag>

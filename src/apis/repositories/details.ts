@@ -82,7 +82,12 @@ export function repositoryTitleFromFiles(detail: RepositoryModDetail | undefined
 
 /** The post's text as one paragraph (line breaks and repeated spaces collapsed) */
 export function repositoryDescription(detail: RepositoryModDetail | undefined): string | undefined {
-    const text = detail?.content?.replace(/\s+/g, " ").trim();
+    const text = detail?.content
+        // Discord codes: custom emoji "<:engihead:9633…>" → ":engihead:", mentions → "@"
+        ?.replace(/<a?:(\w+):\d+>/g, ":$1:")
+        .replace(/<@[!&]?\d+>/g, "@")
+        .replace(/<#\d+>/g, "#")
+        .replace(/\s+/g, " ").trim();
     return text || undefined;
 }
 
@@ -107,11 +112,15 @@ export function slugSuffix(slug: string): string {
 }
 
 const MAX_INDEX_PAGES = 25;
+/** Read again after this long, so posts added meanwhile are found too */
+const INDEX_TTL_MS = 15 * 60_000;
 const postIndexes = new Map<string, Promise<Map<string, RepositoryModSummary>>>();
+const postIndexAt = new Map<string, number>();
 
 function postIndex(baseUrl: string): Promise<Map<string, RepositoryModSummary>> {
     const existing = postIndexes.get(baseUrl);
-    if (existing) return existing;
+    if (existing && Date.now() - (postIndexAt.get(baseUrl) ?? 0) < INDEX_TTL_MS) return existing;
+    postIndexAt.set(baseUrl, Date.now());
     const promise = (async () => {
         const repo = {baseUrl} as ModRepository;
         const index = new Map<string, RepositoryModSummary>();

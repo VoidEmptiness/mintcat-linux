@@ -58,13 +58,16 @@ export const ModNotes = {
         return version;
     },
 
-    /** Any mod has a note (the mod list then shows the notes column) */
-    hasAny(): boolean {
+    /**
+     * Any mod has a note (the mod list then shows the notes column). `_version` (from
+     * useSyncExternalStore) makes React Compiler-memoized callers read it again after changes.
+     */
+    hasAny(_version?: number): boolean {
         return !!notes && Object.keys(notes).length > 0;
     },
 
-    /** The note of a mod (after load; empty while loading) */
-    get(modId: number | undefined): string {
+    /** The note of a mod (after load; empty while loading); `_version` as for hasAny */
+    get(modId: number | undefined, _version?: number): string {
         if (modId == null) return '';
         return notes?.[String(modId)] ?? '';
     },
