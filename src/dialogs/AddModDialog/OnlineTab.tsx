@@ -31,10 +31,17 @@ async function checkLink(link: string): Promise<LinkStatus> {
         if (r.status === 'invalid') return {state: 'invalid'};
         return {state: 'error', message: r.message};
     }
-    if (ModcatApi.isModcatLink(link) || NexusModsApi.isNexusModsLink(link)) {
-        return {state: 'unchecked'};
-    }
-    return {state: 'invalid'};
+    // Nexus and ModCat: their names, so you can tell which mod a link is (they're checked
+    // fully when you press OK; a failed name lookup doesn't stop that)
+    const lookup = NexusModsApi.isNexusModsLink(link) ? NexusModsApi.lookupModLink(link)
+        : ModcatApi.isModcatLink(link) ? ModcatApi.lookupModLink(link) : null;
+    if (!lookup) return {state: 'invalid'};
+    const r = await lookup;
+    if (r.status === 'found') return {state: 'found', name: r.name};
+    if (r.status === 'invalid') return {state: 'invalid'};
+    // not in the public list (e.g. a Nexus mod hidden from searches without a login) or no
+    // answer: the full check when you press OK decides
+    return {state: 'unchecked'};
 }
 
 function StatusRow({link, status, folders}: { link: string; status: LinkStatus; folders?: ItemFolders }) {

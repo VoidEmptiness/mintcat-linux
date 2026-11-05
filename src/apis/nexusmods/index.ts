@@ -1,4 +1,5 @@
 import { message } from 'antd';
+import { decodeHtmlEntities } from '@/utils/HtmlEntities';
 import { t } from 'i18next';
 import { CacheApi } from '@/apis/CacheApi';
 import { DownloadApi } from '@/apis/DownloadApi';
@@ -87,6 +88,7 @@ export class NexusModsEndorseError extends Error {
 
 /** Mod categories and game ids from Nexus, for the session */
 const categoryCache = new Map<string, string | undefined>();
+const modNames = new Map<string, string>();
 const gameIds = new Map<string, number>();
 
 /** How long an account check is reused (premium can change, but not by the minute) */
@@ -520,6 +522,34 @@ export class NexusModsApi {
         } catch (error) {
             console.warn('[NexusModsApi] category not read:', error instanceof Error ? error.message : error);
             return undefined;
+        }
+    }
+
+    /**
+     * The name of the mod a Nexus link points to, without messages (the Add Mod window shows it
+     * next to the link). Uses the public API, so it works without a key.
+     */
+    public static async lookupModLink(url: string): Promise<
+        { status: 'found'; name: string } | { status: 'notFound' } | { status: 'invalid' } | { status: 'error'; message: string }> {
+        const parsed = NexusModsApi.parseModLinks(url);
+        if (!parsed) return {status: 'invalid'};
+        const key = `${parsed.domain}:${parsed.modId}`;
+        const cached = modNames.get(key);
+        if (cached) return {status: 'found', name: cached};
+        try {
+            const gameId = await NexusModsApi.getGameIdForDomain(parsed.domain);
+            if (!gameId) return {status: 'notFound'};
+            const data = await NexusModsApi.graphql<{ mods?: { nodes?: { name?: string; modCategory?: { name?: string } | null }[] } }>(
+                `query ModName($filter: ModsFilter) { mods(filter: $filter, count: 1) { nodes { name modCategory { name } } } }`,
+                {filter: {gameId: [{value: String(gameId), op: 'EQUALS'}], modId: [{value: String(parsed.modId), op: 'EQUALS'}]}});
+            const node = data.mods?.nodes?.[0];
+            const name = node?.name ? decodeHtmlEntities(node.name).trim() : '';
+            if (!name) return {status: 'notFound'};
+            modNames.set(key, name);
+            if (node?.modCategory?.name) categoryCache.set(key, node.modCategory.name.trim());
+            return {status: 'found', name};
+        } catch (error) {
+            return {status: 'error', message: error instanceof Error ? error.message : String(error)};
         }
     }
 
