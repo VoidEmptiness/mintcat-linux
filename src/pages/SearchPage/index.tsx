@@ -436,8 +436,8 @@ export function SearchPage() {
                             options={currentSortOptions.map((o) => ({value: o.value, label: t(o.labelKey)}))}
                             onChange={handleSortChange}
                             disabled={isLoading}
-                            title={t('sort.title')}
-                            style={{width: 150}}
+                            aria-label={t('sort.title')}
+                            style={{width: 172}}
                             popupMatchSelectWidth={false}
                         />
                     )}
