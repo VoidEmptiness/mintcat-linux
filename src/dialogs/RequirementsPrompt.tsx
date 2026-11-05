@@ -66,8 +66,9 @@ function PromptBody({plan, initial, onChange}: {
         setPicked(next);
         onChange(next);
     };
-    const needed = plan.requirements.filter(r => r.likely);
-    const mentioned = plan.requirements.filter(r => !r.likely);
+    // everything a Nexus page lists is needed; in a Pak Hub post only what it clearly says
+    const needed = plan.requirements.filter(r => r.likely || plan.source !== 'pakhub');
+    const mentioned = plan.requirements.filter(r => !r.likely && plan.source === 'pakhub');
     const conflicts = plan.notes.filter(n => /\b(not compatible|incompatible|conflicts?|disable)\b/i.test(n));
     // sentences already shown with a requirement or a load-order hint aren't repeated
     const shown = new Set([...plan.requirements.map(r => r.sentence), ...plan.orderHints.map(h => h.sentence)].filter(Boolean));

@@ -64,12 +64,12 @@ export function nexusRequirements(node: NexusModsModNode, domain: string): Requi
             }
             : {
                 key: `ext:${req.url || req.name}`.toLowerCase(), name: req.name, source: 'external' as const,
-                link: req.url || undefined, notes: req.notes || undefined, addable: false, likely: false,
+                link: req.url || undefined, notes: req.notes || undefined, addable: false, likely: true,
             });
     for (const dlc of requirements?.dlcRequirements ?? []) {
         const name = dlc.gameExpansion?.name || "DLC";
         if (result.some(r => r.key === `dlc:${name}`)) continue;
-        result.push({key: `dlc:${name}`, name, source: 'dlc', addable: false, likely: false, notes: dlc.notes ?? undefined});
+        result.push({key: `dlc:${name}`, name, source: 'dlc', addable: false, likely: true, notes: dlc.notes ?? undefined});
     }
     return result;
 }

@@ -99,8 +99,8 @@ export async function buildListedIndex(): Promise<ListedIndex> {
     }
     try {
         const {RepositoryUpdates} = await import("@/services/RepositoryUpdates");
-        for (const [modId, link] of Object.entries(await RepositoryUpdates.allLinks())) {
-            put({source: 'repo', repoId: link.repoId, slug: link.slug}, stateOf(Number(modId)));
+        for (const [modId, link] of await RepositoryUpdates.linksForMods(mods)) {
+            put({source: 'repo', repoId: link.repoId, slug: link.slug}, stateOf(modId));
         }
     } catch (error) {
         console.warn('[ListedMods] repository links not readable', error);

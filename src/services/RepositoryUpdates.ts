@@ -291,9 +291,20 @@ export const RepositoryUpdates = {
         await save();
     },
 
-    /** Every mod's repository link, by mod id */
-    async allLinks(): Promise<Record<string, RepositoryLink>> {
-        return {...(await load()).byMod};
+    /**
+     * The repository links of these mods, by mod id: linked ones, and files just downloaded
+     * from a repository whose link isn't attached to the mod yet (that happens when the mod
+     * list shows it)
+     */
+    async linksForMods(mods: CompleteModData[]): Promise<Map<number, RepositoryLink>> {
+        const store = await load();
+        const result = new Map<number, RepositoryLink>();
+        for (const mod of mods) {
+            if (mod.modId == null) continue;
+            const link = store.byMod[String(mod.modId)] ?? store.byPath[modPath(mod)];
+            if (link) result.set(mod.modId, link);
+        }
+        return result;
     },
 
     /** How many mods are linked to posts of this repository (or were downloaded from it) */

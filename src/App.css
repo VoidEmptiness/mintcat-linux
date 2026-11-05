@@ -864,7 +864,7 @@ body::before {
     font-size: 12px;
     color: var(--ant-color-text-secondary);
     border-bottom: 1px solid var(--ant-color-border-secondary);
-    padding-inline-end: var(--mod-list-header-end, 14px);
+    padding-inline-end: var(--mod-list-header-end, 8px);
     user-select: none;
 }
 
