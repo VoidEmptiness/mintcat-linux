@@ -10,6 +10,7 @@ pub mod network;
 pub mod system_icon;
 pub mod system_info;
 pub mod webview_host;
+pub mod secret_store;
 
 pub fn run() {
     app::run()

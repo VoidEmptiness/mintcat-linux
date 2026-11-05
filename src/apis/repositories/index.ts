@@ -62,6 +62,8 @@ export interface RepositoryModDetail {
 export type RepositorySort = 'newest' | 'oldest' | 'name' | 'name-desc' | 'most-files';
 
 const SETTINGS_KEY = 'customModRepositories';
+/** Ids of removed repositories by address, so adding one again links its mods again */
+const REMOVED_KEY = 'customModRepositoriesRemoved';
 
 function str(value: unknown, fallback = ''): string {
     return typeof value === 'string' ? value : value == null ? fallback : String(value);
@@ -195,6 +197,16 @@ function slugify(value: string): string {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'repo';
 }
 
+async function readRemoved(): Promise<Record<string, string>> {
+    try {
+        const raw = await (await StorageAPI.getSettings()).getValue(REMOVED_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
 async function save(list: ModRepository[]): Promise<void> {
     const settings = await StorageAPI.getSettings();
     await settings.setValue(SETTINGS_KEY, JSON.stringify(list));
@@ -236,7 +248,10 @@ export const RepositoryStore = {
             throw new Error('duplicate');
         }
         const name = input.name.trim() || friendlyRepositoryName(baseUrl);
-        let id = slugify(name);
+        // Added before: take its old id again (mods remember their repository by id)
+        const removed = await readRemoved();
+        const oldId = removed[baseUrl.toLowerCase()];
+        let id = oldId && !list.some(r => r.id === oldId) ? oldId : slugify(name);
         let n = 2;
         while (list.some(r => r.id === id)) id = `${slugify(name)}-${n++}`;
         const repo: ModRepository = {id, name, baseUrl, game: input.game, type: 'pakhub'};
@@ -247,6 +262,13 @@ export const RepositoryStore = {
 
     async remove(id: string): Promise<void> {
         const list = await this.list();
+        const repo = list.find(r => r.id === id);
+        if (repo) {
+            const removed = await readRemoved();
+            removed[repo.baseUrl.toLowerCase()] = repo.id;
+            const settings = await StorageAPI.getSettings();
+            await settings.setValue(REMOVED_KEY, JSON.stringify(removed));
+        }
         await save(list.filter(r => r.id !== id));
     },
 

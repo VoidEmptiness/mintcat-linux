@@ -27,7 +27,7 @@ export function useDeepLinkHandler(isAppReady: boolean = false) {
     // Process pending URLs when app becomes ready
     useEffect(() => {
         if (isAppReady && pendingUrlsRef.current.length > 0) {
-            console.log('[DeepLink] App ready, processing pending URLs:', pendingUrlsRef.current);
+            console.log('[DeepLink] App ready, processing pending URLs:', pendingUrlsRef.current.map(sanitizeDeepLinkForLog));
             const urls = [...pendingUrlsRef.current];
             pendingUrlsRef.current = [];
             urls.forEach(handleDeepLink);
@@ -90,7 +90,7 @@ export function useDeepLinkHandler(isAppReady: boolean = false) {
                 if (AppInitializer.isCoreReady()) {
                     handleDeepLink(url);
                 } else {
-                    console.log('[DeepLink] App not ready, queuing single-instance URL:', url);
+                    console.log('[DeepLink] App not ready, queuing single-instance URL:', sanitizeDeepLinkForLog(url));
                     pendingUrlsRef.current.push(url);
                 }
             })
@@ -129,7 +129,7 @@ async function handleDeepLink(url: string) {
     // Check if this is an OAuth callback
     if (url.includes('oauth/callback')) {
         const params = OAuthService.parseOAuthUrl(url);
-        console.log('[DeepLink] Parsed OAuth params:', params);
+        console.log('[DeepLink] OAuth callback for:', params?.platform, params?.error ? `(error: ${params.error})` : '');
         
         if (params) {
             try {
@@ -145,23 +145,29 @@ async function handleDeepLink(url: string) {
     }
 
     // Handle other deep link types here in the future
-    console.log('[DeepLink] Unhandled URL type:', url);
+    console.log('[DeepLink] Unhandled URL type:', sanitizeDeepLinkForLog(url));
 }
 
+/** The link without its secrets (download keys, login tokens), for the log */
 function sanitizeDeepLinkForLog(url: string): string {
-    if (!url.toLowerCase().startsWith('nxm://')) {
-        return url;
-    }
+    const secret = ['key', 'expires', 'user_id', 'access_token', 'token', 'code', 'state', 'refresh_token'];
     try {
         const parsed = new URL(url);
-        for (const key of ['key', 'expires', 'user_id']) {
+        for (const key of secret) {
             if (parsed.searchParams.has(key)) {
                 parsed.searchParams.set(key, '[REDACTED]');
             }
         }
+        if (parsed.hash) {
+            const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+            for (const key of secret) {
+                if (hash.has(key)) hash.set(key, '[REDACTED]');
+            }
+            parsed.hash = hash.toString();
+        }
         return parsed.toString();
     } catch {
-        return 'nxm://[REDACTED]';
+        return url.replace(/([?&#](?:key|expires|user_id|access_token|token|code|state|refresh_token)=)[^&#\s]+/gi, '$1[REDACTED]');
     }
 }
 

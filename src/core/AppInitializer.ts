@@ -93,6 +93,10 @@ export class AppInitializer {
             // usedVersion 应只在用户手动切换版本时才写入，但旧逻辑在添加 mod 时错误地写入了当前版本
             await this.fixUsedVersionData();
             await this.fixEscapedModNames();
+            if (this.isMainWindow()) {
+                // in the background: the keyring may first ask to be unlocked
+                void this.moveKeysToKeyring();
+            }
 
             // 应用网络代理设置（使后端下载等请求可走 Clash 等代理）
             await this.applyNetworkProxy();
@@ -207,6 +211,16 @@ export class AppInitializer {
             }
         } catch (error) {
             console.warn('[AppInitializer] Could not check the database journal mode', error);
+        }
+    }
+
+    /** API keys saved as plain text by earlier versions go to the system keyring */
+    private static async moveKeysToKeyring(): Promise<void> {
+        try {
+            const moved = await (await StorageAPI.getOAuths()).moveKeysToKeyring();
+            if (moved > 0) console.info(`[AppInitializer] Moved ${moved} key(s) to the system keyring`);
+        } catch (error) {
+            console.warn('[AppInitializer] Could not move keys to the keyring:', error);
         }
     }
 

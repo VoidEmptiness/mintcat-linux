@@ -109,7 +109,8 @@ export class HomeService {
         if (!parsed) {
             return { status: "invalid" };
         }
-        const downloadAfterAdd = NexusModsApi.hasReusableDownloadCredential(url);
+        // a download key in the link, or a premium account: the file can be downloaded right away
+        const downloadAfterAdd = await NexusModsApi.canDownloadWithoutVisit(url);
 
         const profile = await this.getActiveProfile();
         const modsApi = await StorageAPI.getMods();

@@ -291,6 +291,13 @@ export const RepositoryUpdates = {
         await save();
     },
 
+    /** How many mods are linked to posts of this repository (or were downloaded from it) */
+    async linkCount(repoId: string): Promise<number> {
+        const store = await load();
+        return [...Object.values(store.byMod), ...Object.values(store.byPath)]
+            .filter(link => link.repoId === repoId).length;
+    },
+
     async removeLink(modId: number): Promise<void> {
         const store = await load();
         delete store.byMod[String(modId)];

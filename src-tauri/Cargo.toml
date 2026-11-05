@@ -77,6 +77,8 @@ zip = { version = "2.2.0", default-features = false, features = ["aes-crypto", "
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-clipboard-rs = "0.9.5"
 x11rb = { version = "0.13.2", features = ["xfixes"] }
+# System keyring (Secret Service) for API keys; the version the single-instance plugin already uses
+zbus = "5"
 
 # 系统代理检测（未手动设置代理时使用），通过注册表读取兼容所有 Win10 版本
 [target.'cfg(windows)'.dependencies]

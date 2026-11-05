@@ -116,3 +116,11 @@ export interface NexusModsResolvedMod {
     file?: NexusModsFile;
     sourceUrl?: string;
 }
+
+/** The account behind the API key (from /v1/users/validate.json) */
+export interface NexusModsAccount {
+    name: string;
+    /** Premium members may download through the API without visiting the site */
+    isPremium: boolean;
+    isSupporter: boolean;
+}

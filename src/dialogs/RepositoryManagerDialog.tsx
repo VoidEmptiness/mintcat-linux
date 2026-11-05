@@ -4,7 +4,7 @@ import {Button, Empty, Flex, Input, List, message, Modal, Select, Typography} fr
 import {DeleteOutlined, PlusOutlined} from "@ant-design/icons";
 import {ModRepository, normalizeRepositoryUrl, RepositoryGame, RepositoryStore, SUGGESTED_REPOSITORIES} from "@/apis/repositories";
 import {logActivity} from "@/services/ActivityLog";
-import {confirmDelete} from "@/services/DeleteConfirm";
+import {removeRepository} from "@/services/RepositoryRemoval";
 
 interface Props {
     open: boolean;
@@ -71,10 +71,7 @@ export function RepositoryManagerDialog({open, onClose, onChanged}: Props) {
     });
 
     const onRemove = async (repo: ModRepository) => {
-        if (!(await confirmDelete({title: t("repo.remove"), content: t("deleteConfirm.repository", {name: repo.name})}))) return;
-        await RepositoryStore.remove(repo.id);
-        await logActivity('info', t("repo.removed", {name: repo.name}), repo.baseUrl, 'repository');
-        onChanged();
+        if (await removeRepository(repo)) onChanged();
     };
 
     return (

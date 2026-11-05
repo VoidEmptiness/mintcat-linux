@@ -2,10 +2,14 @@ import {oauths} from '@/storage/db/Schema';
 import {eq, and, desc, asc} from 'drizzle-orm';
 import {getDb} from "@/storage/db/Client.ts";
 import {StorageAPI} from "@/storage";
+import {KEYRING_MARKER, SecretStore} from "@/services/SecretStore";
 
 /**
  * OAuth信息数据访问层
  * 负责OAuth认证相关的数据库操作
+ *
+ * Keys go to the system keyring when there is one; the table then holds KEYRING_MARKER in their
+ * place, and every read here fills the real key back in.
  */
 
 export interface OAuthData {
@@ -26,7 +30,7 @@ export class OAuthDAO {
         try {
             const db = await getDb();
             const result = await db.select().from(oauths).orderBy(desc(oauths.createdAt));
-            return result.map(this.mapToOAuthData);
+            return await this.revealAll(result.map(this.mapToOAuthData));
         } catch (error) {
             console.error('获取所有OAuth记录失败:', error);
             throw error;
@@ -40,7 +44,7 @@ export class OAuthDAO {
         try {
             const db = await getDb();
             const result = await db.select().from(oauths).where(eq(oauths.id, id)).limit(1);
-            return result.length > 0 ? this.mapToOAuthData(result[0]) : null;
+            return result.length > 0 ? await this.reveal(this.mapToOAuthData(result[0])) : null;
         } catch (error) {
             console.error(`获取OAuth记录失败 [ID: ${id}]:`, error);
             throw error;
@@ -54,7 +58,7 @@ export class OAuthDAO {
         try {
             const db = await getDb();
             const result = await db.select().from(oauths).where(eq(oauths.uid, uid)).limit(1);
-            return result.length > 0 ? this.mapToOAuthData(result[0]) : null;
+            return result.length > 0 ? await this.reveal(this.mapToOAuthData(result[0])) : null;
         } catch (error) {
             console.error(`根据UID获取OAuth记录失败 [UID: ${uid}]:`, error);
             throw error;
@@ -70,7 +74,7 @@ export class OAuthDAO {
             const result = await db.select().from(oauths)
                 .where(eq(oauths.platform, platform))
                 .orderBy(desc(oauths.createdAt));
-            return result.map(this.mapToOAuthData);
+            return await this.revealAll(result.map(this.mapToOAuthData));
         } catch (error) {
             console.error(`根据平台获取OAuth记录失败 [平台: ${platform}]:`, error);
             throw error;
@@ -86,7 +90,7 @@ export class OAuthDAO {
             const result = await db.select().from(oauths)
                 .where(and(eq(oauths.uid, uid), eq(oauths.platform, platform)))
                 .limit(1);
-            return result.length > 0 ? this.mapToOAuthData(result[0]) : null;
+            return result.length > 0 ? await this.reveal(this.mapToOAuthData(result[0])) : null;
         } catch (error) {
             console.error(`根据UID和平台获取OAuth记录失败 [UID: ${uid}, 平台: ${platform}]:`, error);
             throw error;
@@ -105,7 +109,7 @@ export class OAuthDAO {
                 platform: oauthData.platform,
             }).returning();
 
-            return result.length > 0 ? this.mapToOAuthData(result[0]) : null;
+            return result.length > 0 ? await this.reveal(this.mapToOAuthData(result[0])) : null;
         } catch (error) {
             console.error('创建OAuth记录失败:', error);
             throw error;
@@ -121,8 +125,25 @@ export class OAuthDAO {
             const updateData: any = {};
 
             if (oauthData.uid !== undefined) updateData.uid = oauthData.uid;
-            if (oauthData.oauth !== undefined) updateData.oauth = oauthData.oauth;
             if (oauthData.platform !== undefined) updateData.platform = oauthData.platform;
+            if (oauthData.oauth !== undefined || oauthData.uid !== undefined || oauthData.platform !== undefined) {
+                const rows = await db.select().from(oauths).where(eq(oauths.id, id)).limit(1);
+                const current = rows[0];
+                if (!current) return false;
+                const uid = oauthData.uid ?? current.uid;
+                const platform = oauthData.platform ?? current.platform;
+                const moved = uid !== current.uid || platform !== current.platform;
+                let value = oauthData.oauth;
+                if (value === undefined && moved) {
+                    value = (await this.reveal(this.mapToOAuthData(current))).oauth;
+                }
+                if (moved && current.oauth === KEYRING_MARKER) {
+                    await SecretStore.remove(current.uid, current.platform);
+                }
+                if (value !== undefined) {
+                    updateData.oauth = await this.storeSecret(uid, platform, value);
+                }
+            }
 
             updateData.updatedAt = new Date();
 
@@ -168,6 +189,7 @@ export class OAuthDAO {
     public async deleteOAuth(id: number): Promise<boolean> {
         try {
             const db = await getDb();
+            await this.forgetSecrets(await db.select().from(oauths).where(eq(oauths.id, id)));
             await db.delete(oauths).where(eq(oauths.id, id));
             return true;
         } catch (error) {
@@ -182,6 +204,7 @@ export class OAuthDAO {
     public async deleteOAuthByUid(uid: number): Promise<boolean> {
         try {
             const db = await getDb();
+            await this.forgetSecrets(await db.select().from(oauths).where(eq(oauths.uid, uid)));
             await db.delete(oauths).where(eq(oauths.uid, uid));
             return true;
         } catch (error) {
@@ -196,6 +219,7 @@ export class OAuthDAO {
     public async deleteOAuthByPlatform(platform: string): Promise<boolean> {
         try {
             const db = await getDb();
+            await this.forgetSecrets(await db.select().from(oauths).where(eq(oauths.platform, platform)));
             await db.delete(oauths).where(eq(oauths.platform, platform));
             return true;
         } catch (error) {
@@ -210,6 +234,8 @@ export class OAuthDAO {
     public async deleteOAuthByUidAndPlatform(uid: number, platform: string): Promise<boolean> {
         try {
             const db = await getDb();
+            await this.forgetSecrets(await db.select().from(oauths)
+                .where(and(eq(oauths.uid, uid), eq(oauths.platform, platform))));
             await db.delete(oauths).where(and(eq(oauths.uid, uid), eq(oauths.platform, platform)));
             return true;
         } catch (error) {
@@ -249,7 +275,7 @@ export class OAuthDAO {
                 .where(and(eq(oauths.platform, platform), eq(oauths.uid, activeUserData.id)))
                 .limit(1);
 
-            return result.length > 0 ? this.mapToOAuthData(result[0]) : null;
+            return result.length > 0 ? await this.reveal(this.mapToOAuthData(result[0])) : null;
         } catch (error) {
             console.error(`获取当前活跃用户的 ${platform} OAuth记录失败:`, error);
             return null;
@@ -276,6 +302,48 @@ export class OAuthDAO {
         } catch (error) {
             console.error('获取OAuth统计信息失败:', error);
             return {total: 0, byPlatform: {}};
+        }
+    }
+
+    /**
+     * Move keys still kept as plain text in the table into the keyring (once per start; keys
+     * stay where they are when there's no keyring). Returns how many were moved.
+     */
+    public async moveKeysToKeyring(): Promise<number> {
+        const db = await getDb();
+        const rows = await db.select().from(oauths);
+        let moved = 0;
+        for (const row of rows) {
+            const value = row.oauth ?? '';
+            if (!value.trim() || value === KEYRING_MARKER) continue;
+            if (!await SecretStore.put(row.uid, row.platform, value)) break; // no keyring: try next start
+            await db.update(oauths).set({oauth: KEYRING_MARKER}).where(eq(oauths.id, row.id));
+            moved++;
+        }
+        return moved;
+    }
+
+    /** What to keep in the table for this key: the marker once the keyring has it, else the key */
+    private async storeSecret(uid: number, platform: string, value: string): Promise<string> {
+        if (!value || !value.trim()) {
+            await SecretStore.remove(uid, platform);
+            return '';
+        }
+        return await SecretStore.put(uid, platform, value) ? KEYRING_MARKER : value;
+    }
+
+    private async reveal(data: OAuthData): Promise<OAuthData> {
+        if (data.oauth !== KEYRING_MARKER) return data;
+        return {...data, oauth: (await SecretStore.get(data.uid, data.platform)) ?? ''};
+    }
+
+    private async revealAll(list: OAuthData[]): Promise<OAuthData[]> {
+        return await Promise.all(list.map((data) => this.reveal(data)));
+    }
+
+    private async forgetSecrets(rows: { uid: number; platform: string; oauth: string | null }[]): Promise<void> {
+        for (const row of rows) {
+            if (row.oauth === KEYRING_MARKER) await SecretStore.remove(row.uid, row.platform);
         }
     }
 

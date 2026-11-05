@@ -50,6 +50,7 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            crate::secret_store::restrict_app_folders(app.handle());
             crate::clipboard_watch::start();
             if let Err(error) = frontend::rollback_unconfirmed_pending(app.handle()) {
                 log::warn!("[FrontendUpdate] rollback check failed: {}", error);
@@ -132,6 +133,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             download::download_file,
             download::cancel_download,
+            crate::secret_store::secret_store_get,
+            crate::secret_store::secret_store_set,
+            crate::secret_store::secret_store_delete,
+            crate::secret_store::secret_store_available,
             network::set_network_proxy,
             network::fetch_update_manifest,
             network::fetch_repository_json,

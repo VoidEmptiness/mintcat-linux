@@ -9,7 +9,7 @@ import {
     Spin,
     message,
 } from 'antd';
-import {HomeOutlined, ReloadOutlined} from '@ant-design/icons';
+import {DeleteOutlined, HomeOutlined, ReloadOutlined} from '@ant-design/icons';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import Search from 'antd/es/input/Search';
 import {t} from 'i18next';
@@ -30,12 +30,15 @@ import {
 } from '@/apis/search';
 import {RepositoryManagerDialog} from '@/dialogs/RepositoryManagerDialog';
 import {addRepositoryMod} from '@/services/RepositoryModInstaller';
+import {removeRepository} from '@/services/RepositoryRemoval';
+import {RepositoryStore} from '@/apis/repositories';
 import {getSearchViewModel} from './SearchViewModel';
 import type {ModRepository} from '@/apis/repositories';
 import {AddModType} from '@/dialogs/AddModDialog';
 import {openWindow} from '@/dialogs/AddModDialog/open';
 import {NexusModsApi} from '@/apis/nexusmods';
-import {captureNexusDownloadUrl} from '@/apis/nexusmods/downloadWebview';
+import {captureNexusDownloadUrl, isNexusDownloadWindowClosed} from '@/apis/nexusmods/downloadWebview';
+import type {NexusModsModNode} from '@/apis/nexusmods/types';
 import './styles.css';
 
 // mod.io 排序选项：value 为 sortBy_sortOrder，便于与 state 同步
@@ -199,6 +202,13 @@ export function SearchPage() {
         }
     }, [refreshAvailableSources, switchSource]);
 
+    // Remove a repository from the source dropdown (same as in "Add or remove repositories…")
+    const handleRemoveRepository = useCallback(async (source: string) => {
+        const repo = await RepositoryStore.get(source.replace(/^repo:/, ''));
+        if (!repo) return;
+        if (await removeRepository(repo)) await handleRepositoriesChanged();
+    }, [handleRepositoriesChanged]);
+
     // 处理 mod.io 排序变更
     const handleSortChange = useCallback(
         (value: string) => {
@@ -221,15 +231,26 @@ export function SearchPage() {
                     message.error(t('Invalid Mod Link'));
                     return;
                 }
-                const addModUrl = await captureNexusDownloadUrl(item.profileUrl, { parsed });
+                // Premium: the API gives the file, no Nexus page needed
+                if (await NexusModsApi.canDownloadThroughApi()) {
+                    await openWindow(AddModType.ONLINE, 0, item.profileUrl);
+                    return;
+                }
+                const node = item.rawData as NexusModsModNode | undefined;
+                const gameId = node?.gameId || Number(node?.game?.id) || undefined;
+                const addModUrl = await captureNexusDownloadUrl(item.profileUrl, { parsed, gameId });
                 await openWindow(AddModType.ONLINE, 0, addModUrl);
                 return;
             }
 
             await openWindow(AddModType.ONLINE, 0, item.profileUrl);
         } catch (error) {
-            console.error('Failed to open add mod dialog:', error);
-            message.error(t('Add Mod Error'));
+            if (isNexusDownloadWindowClosed(error)) {
+                message.info(t('nexusmods.windowClosed'));
+                return;
+            }
+            console.error('Failed to open add mod dialog:', error instanceof Error ? error.message : error);
+            message.error(`${t('Add Mod Error')}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }, []);
 
@@ -328,6 +349,30 @@ export function SearchPage() {
                         disabled={isLoading}
                         style={{width: 140}}
                         popupMatchSelectWidth={false}
+                        optionRender={(option) => {
+                            const source = String(option.value ?? '');
+                            if (!isRepositorySource(source)) return option.label;
+                            // repositories can be removed right here
+                            return (
+                                <Flex align="center" justify="space-between" gap={12}>
+                                    <span>{option.label}</span>
+                                    <Button size="small" type="text" danger
+                                            className="search-source-remove"
+                                            icon={<DeleteOutlined/>}
+                                            title={t('repo.removeTitle', {name: String(option.label ?? '')})}
+                                            aria-label={t('repo.removeTitle', {name: String(option.label ?? '')})}
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                            }}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                void handleRemoveRepository(source);
+                                            }}/>
+                                </Flex>
+                            );
+                        }}
                     />
 
                     {/* mod.io 排序（仅当前源为 mod.io 时显示） */}

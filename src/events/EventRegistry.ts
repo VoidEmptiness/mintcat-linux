@@ -159,6 +159,11 @@ export interface EventPayloads {
     profileUrl: string;
   };
 
+  /** A window opened with open_managed_webview is gone (closed by the user or after a capture) */
+  'managed-webview-closed': {
+    label: string;
+  };
+
   // ========================================
   // Mod 更新事件
   // ========================================

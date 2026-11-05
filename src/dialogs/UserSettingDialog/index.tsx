@@ -1,12 +1,16 @@
 import React from "react";
 import {t} from "i18next";
 import {Button, Divider, Flex, Input, message, Modal, Tabs, Typography} from "antd";
-import {LinkOutlined, KeyOutlined, CrownOutlined} from "@ant-design/icons";
+import {LinkOutlined, KeyOutlined, CrownOutlined, LockOutlined, LogoutOutlined} from "@ant-design/icons";
 import {open as openShell} from "@tauri-apps/plugin-shell";
 
 import {ModioApi} from "@/apis/modio";
 import {MODCAT_PLATFORM} from "@/apis/modcat";
-import {NEXUSMODS_PLATFORM} from "@/apis/nexusmods";
+import {NEXUSMODS_PLATFORM, NexusModsApi} from "@/apis/nexusmods";
+import type {NexusModsAccount} from "@/apis/nexusmods/types";
+import {ControlPlaneApi} from "@/apis/ControlPlaneApi";
+import {SecretStore} from "@/services/SecretStore";
+import {confirmDelete} from "@/services/DeleteConfirm";
 import {CacheApi} from "@/apis/CacheApi";
 import {validateVipStatus} from "@/apis/mintcat";
 import {AppViewModel} from "@/AppViewModel";
@@ -31,6 +35,11 @@ interface UserSettingDialogStates {
     vipStatus?: 'Active' | 'Expired' | 'None';
     vipType?: string | null;
     vipExpirationTime?: string | null;
+    /** What Nexus says about the key: checking, the account, or not accepted */
+    nexusAccount?: 'checking' | 'invalid' | NexusModsAccount | null;
+    /** Whether keys go to the system keyring (null: not known yet) */
+    keyring?: boolean | null;
+    signingOut?: boolean;
 }
 
 interface AccessKeyTabConfig {
@@ -40,10 +49,12 @@ interface AccessKeyTabConfig {
     description: string;
     onChange: (e: any) => void;
     onOpen: () => Promise<void>;
+    extra?: React.ReactNode;
 }
 
 class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
     private appService = new AppService();
+    private nexusCheckTimer?: ReturnType<typeof setTimeout>;
 
     public constructor(props: any) {
         super(props);
@@ -60,8 +71,47 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
             vipStatus: "None",
             vipType: null,
             vipExpirationTime: null,
+            nexusAccount: null,
+            keyring: null,
         }
 
+    }
+
+    componentWillUnmount() {
+        clearTimeout(this.nexusCheckTimer);
+    }
+
+    /** Ask Nexus about the saved key (after typing stops) */
+    private checkNexusAccount(delayMs = 0) {
+        clearTimeout(this.nexusCheckTimer);
+        this.nexusCheckTimer = setTimeout(async () => {
+            if (!this.state.nexusmodsOAuth?.trim()) {
+                this.setState({nexusAccount: null});
+                return;
+            }
+            this.setState({nexusAccount: 'checking'});
+            const account = await NexusModsApi.getAccount(true);
+            this.setState({nexusAccount: account ?? 'invalid'});
+        }, delayMs);
+    }
+
+    @autoBind
+    private async onNexusSignOut() {
+        if (!(await confirmDelete({
+            title: t("userSetting.nexusSignOut"),
+            content: t("userSetting.nexusSignOutConfirm"),
+            okText: t("userSetting.nexusSignOutOk"),
+            zIndex: 1300, // above this dialog
+        }))) return;
+        this.setState({signingOut: true});
+        try {
+            const result = await ControlPlaneApi.invoke<{ deleted: number }>('clear_site_cookies', {domains: ['nexusmods.com']});
+            message.success(t("userSetting.nexusSignedOut", {count: result?.deleted ?? 0}));
+        } catch (error) {
+            message.error(`${t("userSetting.nexusSignOutFailed")}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            this.setState({signingOut: false});
+        }
     }
 
     @autoBind
@@ -118,6 +168,8 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
         } catch (error) {
             message.error(t("userSetting.loadUserInfoFailed") + error);
         }
+        this.checkNexusAccount();
+        SecretStore.available().then((keyring) => this.setState({keyring}));
     }
 
     @autoBind
@@ -267,6 +319,7 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
             if (activeUser) {
                 await this.appService.setOAuth(activeUser.id, NEXUSMODS_PLATFORM, value);
             }
+            this.checkNexusAccount(700);
         } catch (error) {
             console.error('Failed to save Nexus Mods API key:', error);
             message.error(t("userSetting.saveOAuthFailed"));
@@ -295,16 +348,48 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
                     </Button>
                 </Flex>
 
-                <Input
+                {/* hidden like a password: keys shouldn't show up in screenshots or screen shares */}
+                <Input.Password
                     prefix={<KeyOutlined className="user-settings-input-icon" />}
                     onChange={config.onChange}
                     allowClear
+                    autoComplete="off"
+                    spellCheck={false}
                     value={config.value}
                     placeholder={config.placeholder}
                 />
                 <Text type="secondary" className="user-settings-desc">
                     {config.description}
                 </Text>
+                {config.extra}
+            </Flex>
+        );
+    }
+
+    private renderNexusAccount() {
+        const account = this.state.nexusAccount;
+        let status: React.ReactNode = null;
+        if (account === 'checking') {
+            status = <Text type="secondary" style={{fontSize: 12}}>{t("userSetting.nexusChecking")}</Text>;
+        } else if (account === 'invalid') {
+            status = <Text type="danger" style={{fontSize: 12}}>{t("userSetting.nexusKeyRejected")}</Text>;
+        } else if (account) {
+            status = <Text type={account.isPremium ? "success" : "secondary"} style={{fontSize: 12}}>
+                {t(account.isPremium ? "userSetting.nexusPremium" : "userSetting.nexusFree", {name: account.name})}
+            </Text>;
+        }
+        return (
+            <Flex vertical gap={6}>
+                {status}
+                <Flex align="center" justify="space-between" gap={8} wrap>
+                    <Text type="secondary" style={{fontSize: 12, flex: 1, minWidth: 200}}>
+                        {t("userSetting.nexusWebsiteLogin")}
+                    </Text>
+                    <Button size="small" icon={<LogoutOutlined/>} loading={this.state.signingOut}
+                            onClick={this.onNexusSignOut}>
+                        {t("userSetting.nexusSignOut")}
+                    </Button>
+                </Flex>
             </Flex>
         );
     }
@@ -345,6 +430,7 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
                     description: t("userSetting.descNexusmodsOAuth"),
                     onChange: this.onNexusmodsOAuthChange,
                     onOpen: this.onOpenNexusmodsClick,
+                    extra: this.renderNexusAccount(),
                 }),
             },
             {
@@ -428,6 +514,12 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
                         className="user-settings-tabs"
                         items={accessKeyTabs}
                     />
+
+                    {this.state.keyring != null &&
+                        <Text type="secondary" style={{fontSize: 12, marginTop: -12}}>
+                            <LockOutlined style={{marginRight: 6}}/>
+                            {t(this.state.keyring ? "userSetting.keysInKeyring" : "userSetting.keysInFile")}
+                        </Text>}
 
                     {/* Footer Actions */}
                     <Button type="primary"

@@ -10,6 +10,7 @@ import type { CompleteModData } from '@/storage/dao/ModDAO';
 import {
     NEXUSMODS_DRG_DOMAIN,
     NEXUSMODS_PLATFORM,
+    type NexusModsAccount,
     type NexusModsDownloadLink,
     type NexusModsFile,
     type NexusModsFilesResponse,
@@ -76,9 +77,64 @@ export class NexusModsAuthenticationRequiredError extends Error {
     }
 }
 
+/** How long an account check is reused (premium can change, but not by the minute) */
+const ACCOUNT_CHECK_TTL_MS = 10 * 60_000;
+let accountCheck: { key: string; at: number; account: NexusModsAccount | null } | null = null;
+let accountCheckRunning: Promise<NexusModsAccount | null> | null = null;
+
 export class NexusModsApi {
     public static async getApiKey(): Promise<string> {
         return await authResolver.getNexusmodsToken();
+    }
+
+    /**
+     * The account behind the saved API key: null without a key or when Nexus doesn't accept it.
+     * Reused for 10 minutes (and refreshed when the key changes).
+     */
+    public static async getAccount(force = false): Promise<NexusModsAccount | null> {
+        const apiKey = await NexusModsApi.getApiKey();
+        if (!apiKey) return null;
+        if (!force && accountCheck && accountCheck.key === apiKey && Date.now() - accountCheck.at < ACCOUNT_CHECK_TTL_MS) {
+            return accountCheck.account;
+        }
+        if (!force && accountCheckRunning) return await accountCheckRunning;
+        const run = (async () => {
+            try {
+                const data = await NexusModsApi.requestJson<{ name?: string; is_premium?: boolean; is_supporter?: boolean; 'is_premium?'?: boolean }>(
+                    '/v1/users/validate.json');
+                const account: NexusModsAccount = {
+                    name: data.name ?? '',
+                    isPremium: !!(data.is_premium ?? data['is_premium?']),
+                    isSupporter: !!data.is_supporter,
+                };
+                accountCheck = {key: apiKey, at: Date.now(), account};
+                return account;
+            } catch (error) {
+                if (NexusModsApi.isAuthenticationRequiredError(error)) {
+                    accountCheck = {key: apiKey, at: Date.now(), account: null};
+                    return null;
+                }
+                // offline or Nexus unreachable: keep what was known, ask again next time
+                console.warn('[NexusModsApi] account check failed:', error instanceof Error ? error.message : error);
+                return accountCheck?.key === apiKey ? accountCheck.account : null;
+            } finally {
+                accountCheckRunning = null;
+            }
+        })();
+        accountCheckRunning = run;
+        return await run;
+    }
+
+    /**
+     * Premium members get files straight from the API, so no Nexus page has to be opened.
+     */
+    public static async canDownloadThroughApi(): Promise<boolean> {
+        return !!(await NexusModsApi.getAccount())?.isPremium;
+    }
+
+    /** A download of this link needs no visit to the site (premium, or the link carries a download key) */
+    public static async canDownloadWithoutVisit(link: string | undefined): Promise<boolean> {
+        return NexusModsApi.hasReusableDownloadCredential(link) || await NexusModsApi.canDownloadThroughApi();
     }
 
     public static async isAuthenticated(): Promise<boolean> {

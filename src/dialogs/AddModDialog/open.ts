@@ -3,7 +3,7 @@ import {emitVoidEvent, onceEvent} from "@/events";
 import {ModioApi} from "@/apis/modio";
 import {ModcatApi} from "@/apis/modcat";
 import {NexusModsApi} from "@/apis/nexusmods";
-import {captureNexusDownloadUrl} from "@/apis/nexusmods/downloadWebview";
+import {captureNexusDownloadUrl, isNexusDownloadWindowClosed} from "@/apis/nexusmods/downloadWebview";
 import {HomeViewModel} from "@/pages/HomePage/HomeViewModel.ts";
 import { IoC } from "@/core/IoC.ts";
 import {emitTo} from "@tauri-apps/api/event";
@@ -327,7 +327,8 @@ async function addOnlineMods(vm: HomeViewModel, list: string[], placeOf: (item: 
 
     for (const item of list) {
         const parsed = NexusModsApi.parseModLinks(item);
-        if (parsed && !NexusModsApi.hasReusableDownloadCredential(item)) {
+        // premium accounts download through the API: no Nexus window needed
+        if (parsed && !await NexusModsApi.canDownloadWithoutVisit(item)) {
             nexusWebviewList.push({ url: item, parsed });
         } else {
             directAddList.push(item);
@@ -371,6 +372,10 @@ async function addOnlineMods(vm: HomeViewModel, list: string[], placeOf: (item: 
             count(await logLinkResult(item.url, r, placed, before));
             results.push(r);
         } catch (error) {
+            if (isNexusDownloadWindowClosed(error)) {
+                await logActivity('info', t("nexusmods.windowClosed"), item.url, 'add-mod');
+                continue;
+            }
             problems++;
             console.error('[AddModDialog] Failed to capture Nexus Mods download URL:', error);
             await logActivity('error', t("addMod.log.failed", {reason: errorText(error)}), item.url, 'add-mod');
