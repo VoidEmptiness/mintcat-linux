@@ -624,7 +624,7 @@
 	"mod.log.fileBack": "已重新找到 Mod 文件：{{name}}",
 	"repo.manageOption": "添加或移除仓库…",
 	"repo.manageTitle": "Mod 仓库",
-	"repo.manageHint": "添加 Pak Hub 类网站（如 pak-hub.pages.dev），即可在来源下拉框中浏览其 Mod。添加的 Mod 会下载到 MINTCAT 自己的数据文件夹。",
+	"repo.manageHint": "添加 Pak Hub 类网站（如 pak-hub.pages.dev），即可在来源下拉框中浏览其中的 Mod。添加的 Mod 会下载到 MINTCAT 自己的数据文件夹。可用这里的“移除”按钮或来源下拉框中旁边的垃圾桶移除网站。",
 	"repo.none": "尚未添加仓库",
 	"repo.addTitle": "添加仓库",
 	"repo.namePlaceholder": "名称（可选，如 Pak Hub）",
@@ -1365,5 +1365,5 @@
 	"userSetting.keysInKeyring": "密钥保存在系统密钥环（KWallet / GNOME 密钥环）中，加密并随登录解锁，不在 MINTCAT 的文件里。",
 	"userSetting.keysInFile": "没有可用的系统密钥环，密钥保存在 MINTCAT 的设置数据库中，所在文件夹只有你的用户账户能打开。",
 	"repo.removeTitle": "移除 {{name}}",
-	"repo.removeLinkedNote": "有 {{count}} 个 Mod 来自该仓库或与其关联。它们及其文件会保留在列表中；只是在你重新添加该仓库之前，MINTCAT 不会再检查它们的新上传（重新添加后会自动恢复关联）。"
+	"repo.removeLinkedNote": "你有 {{count}} 个 Mod 来自该仓库或与其关联。在你重新添加该仓库之前，MINTCAT 不会检查它们的新上传（重新添加后会恢复关联）。"
 }

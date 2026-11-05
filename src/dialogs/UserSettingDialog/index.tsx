@@ -81,11 +81,11 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
         clearTimeout(this.nexusCheckTimer);
     }
 
-    /** Ask Nexus about the saved key (after typing stops) */
-    private checkNexusAccount(delayMs = 0) {
+    /** Ask Nexus about this key (after typing stops) */
+    private checkNexusAccount(key: string, delayMs = 0) {
         clearTimeout(this.nexusCheckTimer);
         this.nexusCheckTimer = setTimeout(async () => {
-            if (!this.state.nexusmodsOAuth?.trim()) {
+            if (!key.trim()) {
                 this.setState({nexusAccount: null});
                 return;
             }
@@ -168,7 +168,7 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
         } catch (error) {
             message.error(t("userSetting.loadUserInfoFailed") + error);
         }
-        this.checkNexusAccount();
+        this.checkNexusAccount((await this.appService.getOAuthByPlatform(NEXUSMODS_PLATFORM).catch(() => null))?.oauth ?? "");
         SecretStore.available().then((keyring) => this.setState({keyring}));
     }
 
@@ -319,7 +319,7 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
             if (activeUser) {
                 await this.appService.setOAuth(activeUser.id, NEXUSMODS_PLATFORM, value);
             }
-            this.checkNexusAccount(700);
+            this.checkNexusAccount(value, 700);
         } catch (error) {
             console.error('Failed to save Nexus Mods API key:', error);
             message.error(t("userSetting.saveOAuthFailed"));
@@ -455,6 +455,7 @@ class UserSettingDialog extends React.Component<any, UserSettingDialogStates> {
                    footer={null}
                    width={480}
                    centered
+                   destroyOnHidden // shown keys are hidden again next time
             >
                 <Flex vertical gap={24} className="user-settings-root">
                     {/* User Profile Section */}

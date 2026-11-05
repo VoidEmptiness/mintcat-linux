@@ -102,35 +102,24 @@ mod linux {
         }
 
         /// The collection new entries go to: the "default" alias (KWallet's kdewallet, GNOME's
-        /// login keyring), else the first one there is, else one the keyring creates (it asks)
+        /// login keyring), else the first one there is. A keyring that isn't set up yet is not
+        /// created from here (that would pop up a "choose a password" dialog out of the blue);
+        /// keys then stay in MINTCAT's database.
         fn default_collection(&self) -> Result<OwnedObjectPath> {
             let service = self.service()?;
             let alias: OwnedObjectPath = service.call("ReadAlias", &("default",))?;
             if alias.as_str() != "/" {
                 return Ok(alias);
             }
-            if let Ok(collections) = service.get_property::<Vec<OwnedObjectPath>>("Collections") {
-                let login = collections
-                    .iter()
-                    .find(|c| c.as_str().ends_with("/collection/login"))
-                    .or_else(|| collections.iter().find(|c| !c.as_str().ends_with("/collection/session")));
-                if let Some(collection) = login {
-                    return Ok(collection.clone());
-                }
-            }
-            let properties = HashMap::from([(
-                "org.freedesktop.Secret.Collection.Label",
-                Value::from("Default keyring"),
-            )]);
-            let (collection, prompt): (OwnedObjectPath, OwnedObjectPath) =
-                service.call("CreateCollection", &(properties, "default"))?;
-            if collection.as_str() != "/" {
-                return Ok(collection);
-            }
-            let created = self
-                .prompt(&prompt)?
-                .ok_or_else(|| anyhow!("the keyring did not create a collection"))?;
-            OwnedObjectPath::try_from(created).map_err(|e| anyhow!("unexpected keyring answer: {e}"))
+            let collections = service
+                .get_property::<Vec<OwnedObjectPath>>("Collections")
+                .unwrap_or_default();
+            collections
+                .iter()
+                .find(|c| c.as_str().ends_with("/collection/login"))
+                .or_else(|| collections.iter().find(|c| !c.as_str().ends_with("/collection/session")))
+                .cloned()
+                .ok_or_else(|| anyhow!("no keyring is set up"))
         }
 
         fn get(&self, account: &str) -> Result<Option<String>> {
@@ -229,13 +218,9 @@ mod linux {
         with_keyring(|k| k.delete(account))
     }
 
-    /// Whether a keyring answers (without creating anything or asking to unlock)
+    /// Whether a keyring is set up to take keys (without asking to unlock it)
     pub fn available() -> bool {
-        with_keyring(|k| {
-            k.service()?.call::<_, _, OwnedObjectPath>("ReadAlias", &("default",))?;
-            Ok(())
-        })
-        .is_ok()
+        with_keyring(|k| k.default_collection().map(|_| ())).is_ok()
     }
 }
 

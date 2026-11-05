@@ -624,7 +624,7 @@
     "mod.log.fileBack": "Mod file found again: {{name}}",
     "repo.manageOption": "Add or remove repositories…",
     "repo.manageTitle": "Mod repositories",
-    "repo.manageHint": "Add Pak Hub-style sites (like pak-hub.pages.dev) to browse their mods from the source dropdown. Mods you add are downloaded into MINTCAT's own data folder.",
+    "repo.manageHint": "Add Pak Hub-style sites (like pak-hub.pages.dev) to browse their mods from the source dropdown. Mods you add are downloaded into MINTCAT's own data folder. Remove a site with its Remove button here, or the bin next to it in the source dropdown.",
     "repo.none": "No repositories added yet",
     "repo.addTitle": "Add a repository",
     "repo.namePlaceholder": "Name (optional, e.g. Pak Hub)",
@@ -1365,5 +1365,5 @@
     "userSetting.keysInKeyring": "Keys are kept in your system keyring (KWallet / GNOME Keyring), encrypted and unlocked with your login, not in MINTCAT's files.",
     "userSetting.keysInFile": "No system keyring answered, so keys are saved in MINTCAT's settings database, in a folder only your user account can open.",
     "repo.removeTitle": "Remove {{name}}",
-    "repo.removeLinkedNote": "{{count}} mod(s) came from it or are linked to it. They stay in your lists with their files; MINTCAT just won't look for newer uploads of them until you add this repository again (adding it again links them again)."
+    "repo.removeLinkedNote": "{{count}} of your mods came from it or are linked to it. MINTCAT won't look for newer uploads of them until you add this repository again (that links them again)."
 }

@@ -65,6 +65,8 @@ export const SecretStore = {
     /** Store a key; false when no keyring took it (the caller keeps it elsewhere) */
     async put(uid: number, platform: string, value: string): Promise<boolean> {
         const account = keyringAccount(uid, platform);
+        // just failed (e.g. its unlock dialog was closed): don't ask again on every keystroke
+        if (coolingDown()) return false;
         try {
             await invoke("secret_store_set", {account, label: label(platform), secret: value});
             cache.set(account, value);
