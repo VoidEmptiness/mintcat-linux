@@ -49,6 +49,11 @@ export class CacheApi {
         return name.replace(illegalChars, '');
     }
 
+    /** The file name a download of this mod (base name) and version gets in the download folder */
+    public static modCacheFileName(modName: string, version: string): string {
+        return CacheApi.buildModCacheFileName(modName, version);
+    }
+
     private static buildModCacheFileName(modName: string, version: string): string {
         const rawName = `${modName}-${version}`;
         const readableName = CacheApi.sanitizeFileName(rawName).slice(0, 120);

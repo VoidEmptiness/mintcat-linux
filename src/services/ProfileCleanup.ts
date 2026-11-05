@@ -9,7 +9,7 @@ import {t} from "i18next";
 import {StorageAPI} from "@/storage";
 import {logActivity} from "@/services/ActivityLog";
 import {DeployLog} from "@/services/DeployLog";
-import {cleanupRemovedRepositoryMods} from "@/services/RepositoryModCleanup";
+import {Downloads} from "@/services/Downloads";
 import {ModListAppearance} from "@/services/ModListAppearance";
 
 const BACKUPS_KEY = "profiles.backups";
@@ -115,11 +115,11 @@ async function pruneFolderColors(): Promise<void> {
 }
 
 /**
- * Pak Hub downloads no profile and no backup uses any more (mod.io downloads are kept;
- * cleanupRemovedRepositoryMod checks the profiles and the backups)
+ * Downloads no profile and no backup uses any more, when "Downloads of removed mods: delete"
+ * is chosen (Settings → Downloads)
  */
 async function cleanupUnusedMods(modIds: number[]): Promise<void> {
-    await cleanupRemovedRepositoryMods(modIds);
+    await Downloads.afterRemove(modIds);
 }
 
 export const ProfileBackups = {

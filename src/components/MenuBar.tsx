@@ -1,6 +1,6 @@
 import React from "react";
 import {Menu, MenuProps} from "antd";
-import {HomeOutlined, SettingOutlined, ThunderboltOutlined} from "@ant-design/icons";
+import {DownloadOutlined, HomeOutlined, SettingOutlined, ThunderboltOutlined} from "@ant-design/icons";
 import {ModioOutlined} from "./SvgIcon.tsx";
 import {t} from "i18next";
 
@@ -11,6 +11,7 @@ export enum MenuPage {
     Home = 'home',
     Setting = 'setting',
     Modio = 'modio',
+    Downloads = 'downloads',
     // Chat = 'chat',
     // Accelerator = 'accelerator',
 }
@@ -30,6 +31,7 @@ class MenuBar extends React.Component<MenuBarProps, any> {
             className: 'tour-step-home',
         },
         {key: MenuPage.Modio, icon: <ModioOutlined/>, label: t("menu.browse"), className: 'tour-step-modio'},
+        {key: MenuPage.Downloads, icon: <DownloadOutlined/>, label: t("menu.downloads")},
         // {key: MenuPage.Accelerator, icon: <ThunderboltOutlined/>, label: t('Accelerator')},
         {key: MenuPage.Setting, icon: <SettingOutlined/>, label: t("Settings"), className: 'tour-step-setting'},
     ];

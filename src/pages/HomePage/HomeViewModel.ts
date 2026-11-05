@@ -15,7 +15,7 @@ import {
 } from "@/services/HomeService.ts";
 import type {ModInfo} from "@/apis/modio/ModInfo.ts";
 import {NexusModsApi, showNexusModsApiKeyRequiredMessage} from "@/apis/nexusmods";
-import {cleanupRemovedRepositoryMod, cleanupRemovedRepositoryMods} from "@/services/RepositoryModCleanup";
+import {Downloads} from "@/services/Downloads";
 import {logActivity, nameList} from "@/services/ActivityLog";
 import {StorageAPI} from "@/storage";
 
@@ -88,8 +88,8 @@ export class HomeViewModel extends BaseViewModel {
         const name = await this.modName(id);
         await this.homeService.removeModFromActiveProfile(id);
         await logActivity('info', t("log.list.removed", {name}), undefined, 'list');
-        // Mods downloaded from a repository (Pak Hub): delete the downloaded file too
-        await cleanupRemovedRepositoryMod(id);
+        // its downloads go too when "Downloads of removed mods: delete" is chosen
+        await Downloads.afterRemove([id]);
     }
 
     /** Remove several mods with one Log line (names looked up in one go) */
@@ -98,8 +98,8 @@ export class HomeViewModel extends BaseViewModel {
         if (ids.length === 1) return this.removeMod(ids[0]);
         const names = await this.modNames(ids);
         await this.homeService.removeModsFromActiveProfile(ids);
-        // Mods downloaded from a repository (Pak Hub): their downloaded files go too
-        await cleanupRemovedRepositoryMods(ids);
+        // their downloads go too when "Downloads of removed mods: delete" is chosen
+        await Downloads.afterRemove(ids);
         await logActivity('info', t("log.list.removedMany", {count: ids.length}), nameList(names), 'list');
     }
 

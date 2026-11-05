@@ -40,7 +40,7 @@ import {emitEvent, listenEvent, type UnlistenFn} from "@/events";
 import {AddModType} from "@/dialogs/AddModDialog";
 import {SearchBox} from "@/pages/HomePage/SearchBox.tsx";
 import {StorageAPI} from "@/storage";
-import {cleanupRemovedRepositoryMods} from "@/services/RepositoryModCleanup";
+import {Downloads} from "@/services/Downloads";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
 import type {ProfileData, ProfileModData} from "@/storage/dao/ProfileDAO";
 import type {ProfileTreeItem} from "@/models/profile/ProfileTreeItem";
@@ -1594,8 +1594,8 @@ export class HomePage extends BasePage<any, ModListPageState> {
                     const id = Number(key.slice("folder-".length));
                     await vm.removeGroup(id);
                 }
-                // like removing the mods one by one: files MINTCAT downloaded for them go too
-                await cleanupRemovedRepositoryMods(mods.filter(m => m.modId != null).map(m => m.modId!));
+                // like removing the mods one by one (their downloads follow the Downloads setting)
+                await Downloads.afterRemove(mods.filter(m => m.modId != null).map(m => m.modId!));
                 if (mods.length) {
                     await logActivity('info', t("log.list.folderModsRemoved", {count: mods.length}),
                         nameList(mods.map(m => String(m.title ?? m.key))), 'list');

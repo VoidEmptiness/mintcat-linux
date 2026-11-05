@@ -668,12 +668,18 @@ export class ModUpdateService {
         }
 
         // Update download information in database (cachePath, progress, status)
+        const previousPath = (await modsApi.getModDownload(mod.modId!))?.cachePath;
         await modsApi.upsertModDownload({
             modId: mod.modId!,
             cachePath: cachePath,
             downloadProgress: 100,
             downloadStatus: "completed"
         });
+        // the old version's file goes when "Old versions after an update: delete" is chosen
+        if (cachePath) {
+            const {Downloads} = await import("@/services/Downloads");
+            await Downloads.afterUpdate(mod.modId!, previousPath, cachePath);
+        }
 
         // Update fileVersion to match the downloaded version
         if (mod.version?.currentVersion) {
