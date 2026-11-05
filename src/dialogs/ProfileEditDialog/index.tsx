@@ -1,6 +1,6 @@
 import React from "react";
 import {t} from "i18next";
-import {Button, Card, Flex, Input, List, message, Modal, Tooltip, Typography} from "antd";
+import {Button, Card, Flex, Input, List, message, Modal, Tag, Tooltip, Typography} from "antd";
 import {CheckOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusCircleOutlined, RollbackOutlined} from "@ant-design/icons";
 import {ProfileViewModel} from "@/dialogs/ProfileEditDialog/ProfileViewModel.ts";
 import { IoC } from "@/core/IoC.ts";
@@ -17,6 +17,24 @@ interface ProfileEditDialogStates {
     backups?: ProfileBackup[];
     /** A backup is being restored or deleted (its buttons are off meanwhile) */
     backupBusy?: string;
+    /** The profile in use */
+    activeProfile?: string;
+}
+
+/** The copy's name, with what copying does */
+function CopyNameForm({initial, onChange}: { initial: string; onChange: (value: string) => void }) {
+    const [value, setValue] = React.useState(initial);
+    return (
+        <Flex vertical gap={8} style={{marginTop: 4}}>
+            <Typography.Text>{t("profile.copyAsk")}</Typography.Text>
+            <Input value={value} maxLength={20} autoFocus autoComplete="off"
+                   addonBefore={t("profile.copyNameLabel")}
+                   onChange={(e) => {
+                       setValue(e.target.value);
+                       onChange(e.target.value);
+                   }}/>
+        </Flex>
+    );
 }
 
 type InputCallback = (name: string) => void;
@@ -54,6 +72,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         this.setState({
             isModalOpen: true
         });
+        void this.fetchData();
     }
 
     private async handleOk() {
@@ -81,11 +100,23 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
 
 
     private async handleAdd() {
-        if (!await this.checkInput(this.state.newProfileName)) {
+        const name = (this.state.newProfileName ?? "").trim();
+        if (!await this.checkInput(name)) {
             return false;
         }
+        if (this.state.profileList?.includes(name)) {
+            message.error(t("Profile Already Exists"));
+            return false;
+        }
+        const ok = await MessageBox.confirm({
+            title: t("profile.addTitle", {name}),
+            content: t("profile.addAsk", {active: this.state.activeProfile ?? ""}),
+            okText: t("profile.addOk"),
+            cancelText: t("Cancel"),
+        });
+        if (!ok) return false;
         const vm = await IoC.get(ProfileViewModel);
-        await vm.addProfile(this.state.newProfileName);
+        await vm.addProfile(name);
 
         await this.fetchData();
         this.setState({
@@ -154,9 +185,26 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
     }
 
     private async handleRename(key: string, newName: string) {
+        newName = newName.trim();
+        if (newName === key) {
+            // nothing changed
+            this.setState({editingKey: null, editingValue: ""});
+            return false;
+        }
         if (!await this.checkInput(newName)) {
             return false;
         }
+        if (this.state.profileList?.includes(newName)) {
+            message.error(t("Profile Already Exists"));
+            return false;
+        }
+        const ok = await MessageBox.confirm({
+            title: t("profile.renameTitle", {from: key, to: newName}),
+            content: t("profile.renameAsk"),
+            okText: t("profile.renameOk"),
+            cancelText: t("Cancel"),
+        });
+        if (!ok) return false;
 
         const vm = await IoC.get(ProfileViewModel);
         await vm.renameProfile(key, newName);
@@ -167,9 +215,35 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         });
     }
 
+    /** A free name for a copy: "default copy", "default copy 2"… (within the 20 characters) */
+    private copyName(key: string): string {
+        const taken = new Set(this.state.profileList ?? []);
+        for (let n = 1; n < 100; n++) {
+            const suffix = n === 1 ? " copy" : ` copy ${n}`;
+            const name = key.slice(0, Math.max(1, 20 - suffix.length)) + suffix;
+            if (!taken.has(name)) return name;
+        }
+        return key.slice(0, 14) + "_" + Date.now().toString(36).slice(-5);
+    }
+
     private async handleCopy(key: string) {
+        let name = this.copyName(key);
+        const ok = await MessageBox.confirm({
+            title: t("profile.copyTitle", {name: key}),
+            content: <CopyNameForm initial={name} onChange={(value) => (name = value)}/>,
+            okText: t("profile.copyOk"),
+            cancelText: t("Cancel"),
+            width: 520,
+        });
+        if (!ok) return;
+        name = name.trim();
+        if (!await this.checkInput(name)) return;
+        if (this.state.profileList?.includes(name)) {
+            message.error(t("Profile Already Exists"));
+            return;
+        }
         const vm = await IoC.get(ProfileViewModel);
-        await vm.copyProfile(key, key + "_copy");
+        await vm.copyProfile(key, name);
         await this.fetchData();
         this.setState({
             newProfileName: ""
@@ -184,9 +258,11 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         const vm = await IoC.get(ProfileViewModel);
         const profileList = await vm.getProfileList();
         const backups = await ProfileBackups.listForActiveGame();
+        const activeProfile = await vm.getActiveProfileName().catch(() => undefined);
         this.setState({
             profileList: profileList,
             backups,
+            activeProfile,
         })
     }
 
@@ -224,11 +300,14 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                          onPressEnter={this.handleAdd}
                                          autoComplete={"off"}
                                   />
-                                  <Button type={"text"}
-                                          className="ml-8 mr-20"
-                                          onClick={this.handleAdd}
-                                          icon={<PlusCircleOutlined/>}
-                                  />
+                                  <Tooltip title={t("profile.addTip")}>
+                                      <Button type={"text"}
+                                              className="ml-8 mr-20"
+                                              onClick={this.handleAdd}
+                                              aria-label={t("profile.addTip")}
+                                              icon={<PlusCircleOutlined/>}
+                                      />
+                                  </Tooltip>
                               </Flex>
                           }
                           renderItem={
@@ -247,21 +326,36 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                                         autoComplete={"off"}
                                                     />
                                                 ) : (
-                                                    <span>{item}</span>
+                                                    <span>
+                                                        {item}
+                                                        {item === this.state.activeProfile && (
+                                                            <Tooltip title={t("profile.inUseTip")}>
+                                                                <Tag color="processing" style={{marginInlineStart: 8}}>{t("profile.inUse")}</Tag>
+                                                            </Tooltip>
+                                                        )}
+                                                    </span>
                                                 )}
                                             </span>
-                                          <Button type={"text"}
-                                                  className="float-right"
-                                                  onClick={() => this.handleDelete(item)}
-                                                  icon={<DeleteOutlined/>}
-                                          />
-                                          <Button type={"text"}
-                                                  className="float-right"
-                                                  onClick={() => this.handleCopy(item)}
-                                                  icon={<CopyOutlined/>}
-                                          />
+                                          <Tooltip title={(this.state.profileList?.length ?? 0) <= 1 ? t("profile.mustKeepAtLeastOne") : t("profile.deleteTip")}>
+                                              <Button type={"text"}
+                                                      className="float-right"
+                                                      onClick={() => this.handleDelete(item)}
+                                                      aria-label={t("profile.deleteTip")}
+                                                      icon={<DeleteOutlined/>}
+                                              />
+                                          </Tooltip>
+                                          <Tooltip title={t("profile.copyTip")}>
+                                              <Button type={"text"}
+                                                      className="float-right"
+                                                      onClick={() => this.handleCopy(item)}
+                                                      aria-label={t("profile.copyTip")}
+                                                      icon={<CopyOutlined/>}
+                                              />
+                                          </Tooltip>
+                                          <Tooltip title={this.state.editingKey === item ? t("profile.renameSaveTip") : t("profile.renameTip")}>
                                           <Button
                                               type={"text"}
+                                              aria-label={t("profile.renameTip")}
                                               className="float-right"
                                               onClick={async () => {
                                                   if (this.state.editingKey === item) {
@@ -275,6 +369,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                               }}
                                               icon={this.state.editingKey === item ? <CheckOutlined/> : <EditOutlined/>}
                                           />
+                                          </Tooltip>
                                       </Flex>
                                   </List.Item>
                           }

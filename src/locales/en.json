@@ -1608,5 +1608,22 @@
     "cols.who.client": "Client",
     "cols.who.everyone": "All",
     "cols.resizeTip": "Drag to resize this column. Double-click to fit it to what's shown.",
-    "cols.resetWidths": "Reset column widths"
+    "cols.resetWidths": "Reset column widths",
+    "profile.addTip": "Create a new, empty profile with the name typed here",
+    "profile.addTitle": "Create the profile \"{{name}}\"?",
+    "profile.addAsk": "It starts empty: no folders and no mods. The profile you're using now (\"{{active}}\") isn't changed. To switch to the new one, pick it in the profile list at the top of the mod list. To start from your current mods instead, use Copy on a profile.",
+    "profile.addOk": "Create",
+    "profile.renameTip": "Rename this profile",
+    "profile.renameSaveTip": "Save the new name",
+    "profile.renameTitle": "Rename \"{{from}}\" to \"{{to}}\"?",
+    "profile.renameAsk": "Only the name changes. Its mods, folders, which mods are on, and its settings stay the same.",
+    "profile.renameOk": "Rename",
+    "profile.copyTip": "Copy this profile into a new one",
+    "profile.copyTitle": "Copy the profile \"{{name}}\"?",
+    "profile.copyAsk": "This makes a new profile with the same folders, the same mods in the same order, the same mods on and off, and the same versions picked. No mod files are copied: both profiles use the same downloads. After that the two are separate: changes to one don't change the other. The profile you're using now stays in use.",
+    "profile.copyNameLabel": "New profile's name",
+    "profile.copyOk": "Copy",
+    "profile.deleteTip": "Delete this profile (asks first, and can keep a backup)",
+    "profile.inUse": "In use",
+    "profile.inUseTip": "The profile the mod list shows and Deploy uses"
 }

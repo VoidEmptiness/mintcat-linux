@@ -185,12 +185,14 @@ export class ProfileViewModel {
             return;
         }
 
-        const profileData = await profileService.getActiveProfileData();
-        if (profileData.name === oldName) {
-            await profileService.renameProfile(profileData.id!, newName);
-            await logActivity('info', t("log.profile.renamed", {from: oldName, to: newName}), undefined, 'profile');
+        // any profile, not only the one in use (renaming another one used to do nothing)
+        const profileData = await profileService.getProfileByName(oldName);
+        if (!profileData?.id) {
+            message.error(t("Profile not found"));
+            return;
         }
-
+        await profileService.renameProfile(profileData.id, newName);
+        await logActivity('info', t("log.profile.renamed", {from: oldName, to: newName}), undefined, 'profile');
     }
 
     public async copyProfile(sourceName: string, newName: string): Promise<void> {

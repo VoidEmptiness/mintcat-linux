@@ -1608,5 +1608,22 @@
 	"cols.who.client": "客户端",
 	"cols.who.everyone": "所有人",
 	"cols.resizeTip": "拖动以调整此列宽度。双击以适应显示的内容。",
-	"cols.resetWidths": "重置列宽"
+	"cols.resetWidths": "重置列宽",
+	"profile.addTip": "用这里输入的名称创建一个新的空配置",
+	"profile.addTitle": "创建配置“{{name}}”？",
+	"profile.addAsk": "新配置是空的：没有文件夹，也没有模组。你当前使用的配置（“{{active}}”）不会改变。要切换到新配置，请在模组列表上方的配置列表中选择它。如果想从当前模组开始，请对配置使用“复制”。",
+	"profile.addOk": "创建",
+	"profile.renameTip": "重命名此配置",
+	"profile.renameSaveTip": "保存新名称",
+	"profile.renameTitle": "将“{{from}}”重命名为“{{to}}”？",
+	"profile.renameAsk": "只改变名称。它的模组、文件夹、启用的模组和设置都保持不变。",
+	"profile.renameOk": "重命名",
+	"profile.copyTip": "把此配置复制为一个新配置",
+	"profile.copyTitle": "复制配置“{{name}}”？",
+	"profile.copyAsk": "这会创建一个新配置，包含相同的文件夹、相同顺序的相同模组、相同的启用/禁用状态和相同的所选版本。不会复制模组文件：两个配置使用相同的下载。之后两者互相独立：修改其中一个不会改变另一个。你当前使用的配置保持不变。",
+	"profile.copyNameLabel": "新配置名称",
+	"profile.copyOk": "复制",
+	"profile.deleteTip": "删除此配置（会先询问，并可保留备份）",
+	"profile.inUse": "使用中",
+	"profile.inUseTip": "模组列表显示并用于部署的配置"
 }
