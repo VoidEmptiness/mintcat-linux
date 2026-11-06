@@ -117,10 +117,19 @@ interface SearchBoxProps {
 export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
     const {t} = useTranslation();
     const [searchKeyword, setSearchKeyword] = React.useState("");
-    const [searchValue, setSearchValue] = React.useState<string[] | undefined>(() => {
+    const [searchValue, setSearchValueState] = React.useState<string[] | undefined>(() => {
         const list = TreeViewConverter.filterList;
         return list?.length ? list : undefined;
     });
+    /**
+     * The chips as of the last change. rc-select can call onSearch right after onChange in the
+     * same event (the clear button does), before a render gives the handlers the new chips.
+     */
+    const chipsRef = React.useRef<string[]>(searchValue ?? []);
+    const setSearchValue = (value: string[] | undefined) => {
+        chipsRef.current = value ?? [];
+        setSearchValueState(value);
+    };
     const [open, setOpen] = React.useState(false);
     /** Counted again each time the list opens */
     const [openCount, setOpenCount] = React.useState(0);
@@ -128,6 +137,12 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
     const selectRef = React.useRef<any>(null);
     /** Bumped when the typed word comes back into the box, to select it */
     const [selectWord, setSelectWord] = React.useState(0);
+    /** The word came back into the box and hasn't been edited: the list shows every choice */
+    const [restored, setRestored] = React.useState(false);
+    /** The box is being focused by a click on a chip's ✕ or the clear button: leave the chips as they are */
+    const keepChips = React.useRef(false);
+    /** The clear button was pressed: the change that follows empties everything, typed text too */
+    const clearing = React.useRef(false);
 
     // the counts follow notes, marks, conflicts and Pak Hub updates while the list is open
     const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
@@ -152,19 +167,29 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
 
     const onSearch = (newValue: string) => {
         setSearchKeyword(newValue);
+        setRestored(false);
         const keyword = newValue.trim();
-        TreeViewConverter.filterList = [...(searchValue ?? []), ...(keyword ? [keyword] : [])];
+        TreeViewConverter.filterList = [...chipsRef.current, ...(keyword ? [keyword] : [])];
         clearTimeout(typingTimer.current);
         typingTimer.current = setTimeout(() => onUpdateTreeView(), 200);
     }
 
     const onSearchSelectChange = (picked: string[]) => {
+        const keyword = clearing.current ? "" : searchKeyword.trim();
+        clearing.current = false;
+        const added = picked.filter(v => !chipsRef.current.includes(v));
+        clearTimeout(typingTimer.current);
+        if (keyword && added.length === 0 && !picked.includes(keyword)) {
+            // a chip was removed while typing: the typed text stays (as text and as a filter)
+            TreeViewConverter.filterList = [...picked, keyword];
+            setSearchValue(picked.length ? picked : undefined);
+            onUpdateTreeView();
+            return;
+        }
         // Picking a filter clears the typed text; keep it as a filter of its own, unless it was
         // typed to find that choice (e.g. "vis" → Visual)
         let value = picked;
-        const keyword = searchKeyword.trim();
         if (keyword && !value.includes(keyword)) {
-            const added = value.filter(v => !(searchValue ?? []).includes(v));
             const lower = keyword.toLocaleLowerCase();
             const typedForChoice = added.some(v =>
                 v.toLocaleLowerCase().includes(lower) || filterLabel(v, t).toLocaleLowerCase().includes(lower)
@@ -174,8 +199,8 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
             }
         }
         const nextValue = value.length ? value : undefined;
-        clearTimeout(typingTimer.current);
         TreeViewConverter.filterList = nextValue ?? [];
+        setRestored(false);
         setSearchKeyword("");
         setSearchValue(nextValue);
         onUpdateTreeView();
@@ -186,19 +211,24 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
         if (e.key !== "Escape" || !searchKeyword) return;
         clearTimeout(typingTimer.current);
         setSearchKeyword("");
-        TreeViewConverter.filterList = [...(searchValue ?? [])];
+        TreeViewConverter.filterList = [...chipsRef.current];
         onUpdateTreeView();
     }
 
     // Back in the box: the last word you typed comes back as text, selected (the list doesn't change)
     const onFocus = () => {
+        if (keepChips.current) {
+            keepChips.current = false;
+            return;
+        }
         if (searchKeyword) return;
-        const chips = searchValue ?? [];
+        const chips = chipsRef.current;
         for (let i = chips.length - 1; i >= 0; i--) {
             if (filterGroupOf(chips[i])) continue;
             const rest = chips.filter((_, j) => j !== i);
             setSearchValue(rest.length ? rest : undefined);
             setSearchKeyword(chips[i]);
+            setRestored(true);
             setSelectWord(n => n + 1);
             // the box only shows typed text while its list is open (Ctrl+F doesn't open it)
             onOpenChange(true);
@@ -214,6 +244,7 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
 
     const onBlur = () => {
         const filterList = TreeViewConverter.filterList;
+        setRestored(false);
         setSearchKeyword("");
         setSearchValue(filterList?.length ? filterList : undefined);
     }
@@ -241,7 +272,15 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
     }, []);
 
     return (
-        <span ref={rootRef} className="mod-search-box">
+        <span ref={rootRef} className="mod-search-box"
+              onMouseDownCapture={(e) => {
+                  // removing a chip or clearing the box: don't turn the typed word back into text first
+                  const target = e.target instanceof Element ? e.target : null;
+                  if (target?.closest('.ant-select-selection-item-remove, .ant-select-clear')) {
+                      keepChips.current = true;
+                      setTimeout(() => keepChips.current = false, 0);
+                  }
+              }}>
             <Select ref={selectRef}
                     size={"small"}
                     value={searchValue}
@@ -250,6 +289,9 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
                     onFocus={onFocus}
                     onBlur={onBlur}
                     onKeyDown={onKeyDown}
+                    onClear={() => {
+                        clearing.current = true;
+                    }}
                     open={open}
                     onOpenChange={onOpenChange}
                     className="w-300"
@@ -259,7 +301,7 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
                     defaultActiveFirstOption={false}
                     // the typed text is kept here so Esc really empties the box (the Select's own copy
                     // stayed hidden and the next letters were added to it)
-                    showSearch={{searchValue: searchKeyword, onSearch, filterOption: filterByText}}
+                    showSearch={{searchValue: searchKeyword, onSearch, filterOption: restored ? false : filterByText}}
                     allowClear={true}
                     mode={"multiple"}
                     maxTagCount="responsive"

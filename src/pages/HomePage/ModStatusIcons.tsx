@@ -189,16 +189,22 @@ function ColumnResizer({column}: { column: ModListColumn }) {
             width = clampColumnWidth(startWidth + (startX - ev.clientX));
             ModListAppearance.previewColumnWidth(column, width);
         };
+        let ended = false;
         const up = () => {
+            if (ended) return;
+            ended = true;
             handle.removeEventListener('pointermove', move);
             handle.removeEventListener('pointerup', up);
             handle.removeEventListener('pointercancel', up);
+            handle.removeEventListener('lostpointercapture', up);
             document.body.classList.remove('mod-col-resizing');
             if (width !== startWidth) void ModListAppearance.saveColumnWidth(column, width);
         };
         handle.addEventListener('pointermove', move);
         handle.addEventListener('pointerup', up);
         handle.addEventListener('pointercancel', up);
+        // e.g. the window lost focus mid-drag: end it there instead of leaving the resize cursor on
+        handle.addEventListener('lostpointercapture', up);
     };
     return (
         <Tooltip title={t('cols.resizeTip')} mouseEnterDelay={0.8}>

@@ -1342,9 +1342,11 @@ export class HomePage extends BasePage<any, ModListPageState> {
 
         // Get profile-specific mod data (enabled status, used version)
         const profileMods = activeProfile ? await profilesApi.getProfileMods(activeProfile.id!) : [];
+        perfMark('home:tree-db');
 
         // Nothing changed since the list was last built: keep the rendered rows as they are
         const signature = treeSignature(activeProfile?.id, activeRoot, profileMods, allMods);
+        perfMark('home:tree-sig', `${signature.length}`);
         if (!resetExpandedKeys && signature === this.lastTreeSignature && this.state.treeData?.length) {
             perfMark('home:tree-unchanged');
             await this.refreshUnsavedState();
@@ -1363,6 +1365,7 @@ export class HomePage extends BasePage<any, ModListPageState> {
         // TreeViewConverter now accepts CompleteModData[] and ProfileModData[]
         const converter = new TreeViewConverter(allMods, profileMods);
         converter.convertToFromRoot(activeRoot);
+        perfMark('home:tree-converted');
         void ModListAppearance.migrateLegacyKeys(TreeViewConverter.folderColorKeys);
         // Global install positions (folders included) for the row badges and conflict winners
         InstallOrder.set(flattenTreeModIds(activeRoot));

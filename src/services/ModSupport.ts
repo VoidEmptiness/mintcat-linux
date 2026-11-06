@@ -15,6 +15,8 @@ import {ModioApi, ModioWriteError} from "@/apis/modio";
 import {AuthResolver} from "@/services/network";
 
 const REFRESH_MS = 10 * 60_000;
+/** After a failed read (rejected key, offline), the same key / token is tried again after this */
+const RETRY_FAILED_MS = 2 * 60_000;
 const auth = new AuthResolver();
 
 export type NexusEndorsement = 'Endorsed' | 'Abstained' | 'Undecided';
@@ -37,6 +39,9 @@ let nexus: NexusLists | null = null;
 let modio: ModioLists | null = null;
 let nexusLoading: Promise<void> | null = null;
 let modioLoading: Promise<void> | null = null;
+/** The last failed read: not repeated for the same key / token for a while (every card and the search box ask) */
+let nexusFailed: { key: string; at: number } | null = null;
+let modioFailed: { token: string; at: number } | null = null;
 /** Something is being sent for this mod ("nexus:drg:12", "modio:34") */
 const busy = new Set<string>();
 let version = 0;
@@ -85,6 +90,7 @@ async function loadNexus(force: boolean): Promise<void> {
         return;
     }
     if (!force && nexus && nexus.key === key && Date.now() - nexus.at < REFRESH_MS) return;
+    if (!force && nexusFailed && nexusFailed.key === key && Date.now() - nexusFailed.at < RETRY_FAILED_MS) return;
     if (nexusLoading) return nexusLoading;
     nexusLoading = (async () => {
         try {
@@ -97,7 +103,9 @@ async function loadNexus(force: boolean): Promise<void> {
                 tracked: new Set(tracked.map(m => nexusKey(m.domain, m.modId))),
                 endorsements: new Map(endorsements.map(m => [nexusKey(m.domain, m.modId), m.status])),
             };
+            nexusFailed = null;
         } catch (error) {
+            nexusFailed = {key, at: Date.now()};
             console.warn('[ModSupport] Nexus lists not readable:', error instanceof Error ? error.message : error);
         } finally {
             nexusLoading = null;
@@ -118,6 +126,7 @@ async function loadModio(force: boolean): Promise<void> {
         return;
     }
     if (!force && modio && modio.token === token && Date.now() - modio.at < REFRESH_MS) return;
+    if (!force && modioFailed && modioFailed.token === token && Date.now() - modioFailed.at < RETRY_FAILED_MS) return;
     if (modioLoading) return modioLoading;
     modioLoading = (async () => {
         try {
@@ -126,7 +135,9 @@ async function loadModio(force: boolean): Promise<void> {
                 ModioApi.getMyRatings(),
             ]);
             modio = {token, at: Date.now(), subscribed: new Set(subscribed), ratings};
+            modioFailed = null;
         } catch (error) {
+            modioFailed = {token, at: Date.now()};
             console.warn('[ModSupport] mod.io lists not readable:', error instanceof Error ? error.message : error);
         } finally {
             modioLoading = null;

@@ -458,7 +458,7 @@ function LogsKeptSetting() {
                          onBlur={() => void save(keep)}
                          onPressEnter={() => void save(keep)}/>
             <Typography.Text type="secondary" style={{fontSize: 12}}>
-                {t("logs.launches")}{stats ? ` · ${t("logs.now", {count: stats.launches, size: mb})}` : ""}
+                {t("logs.launches", {count: keep})}{stats ? ` · ${t("logs.now", {count: stats.launches, size: mb})}` : ""}
             </Typography.Text>
             <Button size="small" onClick={() => void appLogDir().then(openPath).catch((e) => message.error(String(e)))}>
                 {t("log.openFolder")}

@@ -110,6 +110,9 @@ export async function cleanupRemovedRepositoryMod(modId: number): Promise<boolea
         const {RepositoryUpdates} = await import("@/services/RepositoryUpdates");
         await RepositoryUpdates.removeLink(modId).catch(() => undefined);
         await RepositoryUpdates.forgetPath(filePath).catch(() => undefined);
+        // and your note on it (the mod record is gone)
+        const {ModNotes} = await import("@/services/ModNotes");
+        await ModNotes.forget([modId]).catch(() => undefined);
         await logActivity('info', t("repo.removedDownload", {name: mod.displayName || fileNameOf(filePath)}), filePath, 'repository');
         return deleted;
     } catch (error) {

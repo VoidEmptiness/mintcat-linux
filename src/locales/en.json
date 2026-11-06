@@ -1575,7 +1575,6 @@
     "modList.colFlags": "Flags",
     "modList.colNoteTip": "Note: your note on the mod (click it to edit).",
     "logs.keepLabel": "Logs kept",
-    "logs.launches": "launches",
     "logs.now": "{{count}} saved now ({{size}} MB)",
     "help.logsKeep": "Every launch gets its own log, and the Log panel's entries are saved with it. This many launches are kept; the oldest are deleted as new launches start. Only MINTCAT's own log files are deleted.",
     "log.thisLaunch": "This launch",
@@ -1663,5 +1662,7 @@
     "filter.tip.note": "Mods you wrote a note for.",
     "filter.tip.liked": "Endorsed on Nexus Mods, or liked on mod.io.",
     "filter.tip.disliked": "Disliked on mod.io.",
-    "filter.tip.followed": "Tracked on Nexus Mods, or subscribed to on mod.io."
+    "filter.tip.followed": "Tracked on Nexus Mods, or subscribed to on mod.io.",
+    "logs.launches_one": "launch",
+    "logs.launches_other": "launches"
 }
