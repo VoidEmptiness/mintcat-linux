@@ -4,10 +4,7 @@ import {TreeProps} from "antd";
 import {ProfileTreeItem, ProfileTreeType} from "@/storage/db/Schema.ts";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
 import type {ProfileModData} from "@/storage/dao/ProfileDAO";
-
-/** Values of the search box's fixed "Status" and "Tags" choices (see SearchBox) */
-const APPROVAL_FILTERS = new Set(["Verified", "Approved", "Sandbox"]);
-const TAG_FILTERS = new Set(["RequiredByAll", "Optional", "Audio", "Framework", "Tools", "QoL", "Visual", "Gameplay"]);
+import {activeFilters, type FilterEntry, type FilterProbe, matchesFilters, NO_PROBE, versionList} from "@/services/ModFilters";
 
 /**
  * TreeViewConverter
@@ -21,27 +18,19 @@ const TAG_FILTERS = new Set(["RequiredByAll", "Optional", "Audio", "Framework", 
  */
 export const FOLDER_COLOR_PREFIX = "path:";
 
-/** Stored version lists are arrays, but older records may hold the JSON text */
-function versionList(value: unknown): string[] {
-    if (Array.isArray(value)) return value.map(String);
-    if (typeof value === "string" && value.trim().startsWith("[")) {
-        try {
-            const parsed = JSON.parse(value);
-            return Array.isArray(parsed) ? parsed.map(String) : [];
-        } catch {
-            return [];
-        }
-    }
-    return [];
-}
-
 export class TreeViewConverter {
 
     public static filterList?: string[] = [];
 
+    /** Where the filters look up notes, marks, conflicts and Pak Hub posts (set by the search box) */
+    public static probe: FilterProbe = NO_PROBE;
+
+    /** Every mod of the profile in the last list built, filtered or not (the search box counts them) */
+    public static profileEntries: FilterEntry[] = [];
+
     /** A search or filter is hiding part of the list */
     public static isFiltering(): boolean {
-        return (TreeViewConverter.filterList ?? []).some(f => f && f !== "All");
+        return activeFilters(TreeViewConverter.filterList).length > 0;
     }
 
     /** Folder key ("folder-<id>") → folder color key, from the last list built */
@@ -71,46 +60,14 @@ export class TreeViewConverter {
     // ====================================
 
     /**
-     * 根据当前过滤器列表过滤 mod
-     *
-     * Picks from the same group (e.g. Local + mod.io) widen the result; different groups and
-     * typed words narrow it, so "mod.io" + "Enable" + "unified" finds enabled mod.io mods whose
-     * name contains "unified". A typed word matches the name, the mod.io name id, a tag or the
-     * approval status (case-insensitive).
+     * Whether a mod is shown with the search box's filters (see services/ModFilters): picks from
+     * the same group (e.g. Local + mod.io) widen the result; different groups and typed words
+     * narrow it, so "mod.io" + "On" + "unified" finds enabled mod.io mods whose name contains
+     * "unified". A typed word matches the name, the mod.io name id, a tag, the approval status
+     * or your note (case-insensitive).
      */
-    public static filter(modItem: CompleteModData, isEnabled: boolean): boolean {
-        const filterList = (TreeViewConverter.filterList ?? []).filter(f => f && f !== "All");
-        if (filterList.length === 0) {
-            return true;
-        }
-
-        const sources = filterList.filter(f => f.startsWith("source:")).map(f => f.substring(7));
-        if (sources.length && !sources.includes(modItem.sourceType)) {
-            return false;
-        }
-        const enabledStates = filterList.filter(f => f.startsWith("enabled:")).map(f => f === "enabled:true");
-        if (enabledStates.length && !enabledStates.includes(isEnabled)) {
-            return false;
-        }
-        const statuses = filterList.filter(f => APPROVAL_FILTERS.has(f));
-        if (statuses.length && !statuses.includes(modItem.approvalStatus)) {
-            return false;
-        }
-        const tags = filterList.filter(f => TAG_FILTERS.has(f));
-        if (tags.length && !tags.some(tag => modItem.tags?.includes(tag))) {
-            return false;
-        }
-
-        const words = filterList.filter(f => !f.startsWith("source:") && !f.startsWith("enabled:")
-            && !APPROVAL_FILTERS.has(f) && !TAG_FILTERS.has(f));
-        const name = (modItem.displayName || modItem.originalName || "").toLocaleLowerCase();
-        const nameId = (modItem.nameId || "").toLocaleLowerCase();
-        const modTags = (modItem.tags || []).map(tag => tag.toLocaleLowerCase());
-        const approval = (modItem.approvalStatus || "").toLocaleLowerCase();
-        return words.every(word => {
-            const w = word.trim().toLocaleLowerCase();
-            return !w || name.includes(w) || nameId.includes(w) || modTags.includes(w) || approval === w;
-        });
+    public static filter(modItem: CompleteModData, isEnabled: boolean, usedVersion?: string): boolean {
+        return matchesFilters(TreeViewConverter.filterList, {mod: modItem, enabled: isEnabled, usedVersion}, TreeViewConverter.probe);
     }
 
     // ====================================
@@ -122,6 +79,7 @@ export class TreeViewConverter {
      */
     public convertToFromRoot(root: ProfileTreeItem): TreeProps['treeData'] {
         TreeViewConverter.folderColorKeys = {};
+        TreeViewConverter.profileEntries = [];
         const treeRoot = {
             key: "root",
             isLeaf: false,
@@ -158,8 +116,9 @@ export class TreeViewConverter {
         // Find profile-specific data (enabled status, used version)
         const profileMod = this.profileModList?.find(pm => pm.modId === modItem.modId);
         const isEnabled = profileMod?.isEnabled ?? item.enabled;
+        TreeViewConverter.profileEntries.push({mod: modItem, enabled: isEnabled, usedVersion: profileMod?.usedVersion || ""});
 
-        if (!TreeViewConverter.filter(modItem, isEnabled)) {
+        if (!TreeViewConverter.filter(modItem, isEnabled, profileMod?.usedVersion || "")) {
             return; // 不满足过滤条件，跳过
         }
 

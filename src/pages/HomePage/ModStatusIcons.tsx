@@ -2,15 +2,16 @@
  * The marks of a mod row: your note (click to edit, hover to read), endorsed on Nexus Mods /
  * liked or disliked on mod.io, tracked on Nexus Mods / subscribed on mod.io.
  *
- * Columns view (Settings → Mod list): fixed cells at the right of each row under a "Flags"
- * header, so the marks line up; a cell stays empty when it doesn't apply. The note cell is
- * there once any mod has a note, the other two when a Nexus key or mod.io token is saved.
+ * Columns view (Settings → Mod list): fixed cells at the right of each row, each under its own
+ * icon in the header, so the marks line up; a cell stays empty when it doesn't apply. The note
+ * cell is there once any mod has a note, the other two when a Nexus key or mod.io token is
+ * saved. The block can be dragged wider like the other columns; the cells share the room.
  * Compact view: only the marks a mod has, right after its tags.
  */
 import React, {useSyncExternalStore} from "react";
 import {ContextMenu} from "@/components/ContextMenu";
 import {Tooltip} from "antd";
-import {BellFilled, DislikeFilled, EyeFilled, FileTextFilled, LikeFilled} from "@ant-design/icons";
+import {BellFilled, DislikeFilled, EyeFilled, EyeOutlined, FileTextFilled, FileTextOutlined, LikeFilled, LikeOutlined} from "@ant-design/icons";
 import {t} from "i18next";
 import {ModNotes} from "@/services/ModNotes";
 import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
@@ -81,7 +82,7 @@ export function ModStatusIcons({nodeData}: { nodeData: any }) {
         );
     }
     return (
-        <span className="mod-status-columns" onMouseDown={stop} onDoubleClick={stop}>
+        <span className="mod-status-columns" style={flagCellsStyle(showNotes, showSupport)} onMouseDown={stop} onDoubleClick={stop}>
             {showNotes && <span className="mod-status-cell">{noteIcon}</span>}
             {showSupport && <span className="mod-status-cell">{liked}</span>}
             {showSupport && <span className="mod-status-cell">{following}</span>}
@@ -89,11 +90,15 @@ export function ModStatusIcons({nodeData}: { nodeData: any }) {
     );
 }
 
+/** How many flag cells there are (the block is never narrower than them, see App.css) */
+function flagCellsStyle(notes: boolean, support: boolean): React.CSSProperties {
+    return {'--mod-flag-cells': (notes ? 1 : 0) + (support ? 2 : 0)} as React.CSSProperties;
+}
+
 /** Column titles over the list (columns view only); drag a column's left edge to resize it */
 export function ModListColumnsHeader() {
     const {notes, support, columns} = useFlagColumns();
     if (!columns) return null;
-    const flagCells = (notes ? 1 : 0) + (support ? 2 : 0);
     const title = (column: ModListColumn, label: string, tip: string) => (
         <span className={`mod-col mod-col-${column} mod-list-header-col`}>
             <ColumnResizer column={column}/>
@@ -114,10 +119,27 @@ export function ModListColumnsHeader() {
                 {title('game', t('cols.game'), t('cols.gameHeaderTip'))}
                 {title('status', t('cols.status'), t('cols.statusHeaderTip'))}
                 {title('tags', t('modList.colTags'), t('cols.tagsHeaderTip'))}
-                {flagCells > 0 && (
-                    <Tooltip title={[notes ? t('modList.colNoteTip') : '', support ? t('modList.colSupportTip') : ''].filter(Boolean).join(' ')}>
-                        <span className="mod-list-header-flags" style={{width: flagCells * 20 - 2}}>{t('modList.colFlags')}</span>
-                    </Tooltip>
+                {(notes || support) && (
+                    // the same cells as in the rows, with an icon over each, so the marks line up
+                    <span className="mod-status-columns mod-list-header-flags" style={flagCellsStyle(notes, support)}
+                          aria-label={t('modList.colFlags')}>
+                        <ColumnResizer column="flags"/>
+                        {notes && (
+                            <Tooltip title={t('modList.colNoteTip')}>
+                                <span className="mod-status-cell"><FileTextOutlined/></span>
+                            </Tooltip>
+                        )}
+                        {support && (
+                            <Tooltip title={t('modList.colLikedTip')}>
+                                <span className="mod-status-cell"><LikeOutlined/></span>
+                            </Tooltip>
+                        )}
+                        {support && (
+                            <Tooltip title={t('modList.colFollowTip')}>
+                                <span className="mod-status-cell"><EyeOutlined/></span>
+                            </Tooltip>
+                        )}
+                    </span>
                 )}
             </div>
         </ContextMenu>
@@ -188,7 +210,8 @@ function ColumnResizer({column}: { column: ModListColumn }) {
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => {
                       e.stopPropagation();
-                      const fit = contentWidth(column);
+                      // the flag cells have nothing to fit to: back to their usual width
+                      const fit = column === 'flags' ? undefined : contentWidth(column);
                       if (fit) void ModListAppearance.saveColumnWidth(column, fit);
                       else void ModListAppearance.resetColumnWidth(column);
                   }}/>

@@ -123,4 +123,9 @@ export const PostFacts = {
         }
         return fact;
     },
+
+    /** What's known about a post, without asking for it (the search box's counts look at every mod) */
+    peek(ref: PostRef | undefined): PostFact | undefined {
+        return ref && facts ? facts[keyOf(ref)] : undefined;
+    },
 };

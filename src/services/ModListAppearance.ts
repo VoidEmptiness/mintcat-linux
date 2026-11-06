@@ -8,9 +8,13 @@ import {StorageAPI} from "@/storage";
 const SETTINGS_KEY = "ui.modListAppearance";
 
 /** Columns of the columns view whose width can be dragged */
-export type ModListColumn = 'version' | 'game' | 'status' | 'tags';
+export type ModListColumn = 'version' | 'game' | 'status' | 'tags' | 'flags';
 
-export const COLUMN_DEFAULT_WIDTH: Record<ModListColumn, number> = {version: 88, game: 46, status: 96, tags: 150};
+/**
+ * Flags: the note, endorsed/liked and tracked/subscribed cells share the width (never narrower
+ * than the cells themselves, see App.css)
+ */
+export const COLUMN_DEFAULT_WIDTH: Record<ModListColumn, number> = {version: 88, game: 46, status: 96, tags: 150, flags: 58};
 export const COLUMN_MIN_WIDTH = 30;
 export const COLUMN_MAX_WIDTH = 600;
 

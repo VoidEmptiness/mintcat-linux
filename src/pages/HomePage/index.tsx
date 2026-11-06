@@ -39,6 +39,7 @@ import {BasePage} from "../IBasePage.ts";
 import {emitEvent, listenEvent, type UnlistenFn} from "@/events";
 import {AddModType} from "@/dialogs/AddModDialog";
 import {SearchBox} from "@/pages/HomePage/SearchBox.tsx";
+import {filterStoresStamp} from "@/services/ModFilterProbe";
 import {StorageAPI} from "@/storage";
 import {Downloads} from "@/services/Downloads";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
@@ -137,7 +138,9 @@ interface ModListPageState {
 function treeSignature(profileId: number | undefined, root: ProfileTreeItem, profileMods: ProfileModData[], mods: CompleteModData[]): string {
     try {
         // The search box's filter changes what the list shows, so it is part of the signature too
-        return JSON.stringify([i18next.language, profileId, TreeViewConverter.filterList ?? [], root, profileMods, mods]);
+        // (and, while filtering, the notes, marks, conflicts and posts some filters look at)
+        const stamp = TreeViewConverter.isFiltering() ? filterStoresStamp() : "";
+        return JSON.stringify([i18next.language, profileId, TreeViewConverter.filterList ?? [], stamp, root, profileMods, mods]);
     } catch {
         return String(Math.random());
     }
