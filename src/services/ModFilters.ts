@@ -9,13 +9,11 @@
  *
  * The box only offers choices that find something in the profile, with how many mods each
  * finds. Facts kept outside a mod's own record (your notes, Nexus Mods / mod.io marks,
- * conflicts, Pak Hub posts) come from a FilterProbe, so this file holds no stores itself.
+ * conflicts, Pak Hub links) come from a FilterProbe, so this file holds no stores itself.
  */
 import type {CompleteModData} from "@/storage/dao/ModDAO";
 import {compareGameVersions, newestGameVersion} from "@/services/ListDisplay";
 import {TimeUtils} from "@/utils/TimeUtils";
-
-export type WhoNeeds = 'everyone' | 'host' | 'client';
 
 /** One mod of the profile as the filters see it */
 export interface FilterEntry {
@@ -37,8 +35,6 @@ export interface FilterProbe {
     pakHub(mod: CompleteModData): boolean;
     /** Its Pak Hub post has a newer upload than the one you have */
     pakHubUpdate(modId: number): boolean;
-    /** What its Pak Hub post says about who has to have it (only posts already read) */
-    postWho(mod: CompleteModData): WhoNeeds | undefined;
     /** The newest game version among your mod.io mods */
     latestGameVersion(): string | undefined;
 }
@@ -50,13 +46,12 @@ export const NO_PROBE: FilterProbe = {
     conflict: () => false,
     pakHub: () => false,
     pakHubUpdate: () => false,
-    postWho: () => undefined,
     latestGameVersion: () => undefined,
 };
 
 const ONLINE_SOURCES = new Set(["Modio", "modcat", "nexusmods"]);
 export const TAG_PREFIX = "tag:";
-/** Shown as "Everyone needs it" (Who needs it), not as a tag */
+/** mod.io's mark that everyone in the lobby needs the mod: a choice of its own, not a tag */
 const REQUIRED_BY_ALL = "RequiredByAll";
 
 /** Stored version lists are arrays, but older records may hold the JSON text */
@@ -99,15 +94,20 @@ function olderGameVersion(e: FilterEntry, probe: FilterProbe): boolean {
     return !!game && !!latest && compareGameVersions(game, latest) < 0;
 }
 
-function whoNeeds(e: FilterEntry, probe: FilterProbe): WhoNeeds | undefined {
-    if (hasTag(e.mod, REQUIRED_BY_ALL)) return 'everyone';
-    return probe.postWho(e.mod);
+/**
+ * mod.io's review status. Only mod.io has one: older Nexus Mods / ModCat records can hold an
+ * "Approved" they never had (the Status column doesn't show it for them either).
+ */
+function modioApproval(mod: CompleteModData): string {
+    return mod.sourceType === "Modio" ? mod.approvalStatus || "" : "";
 }
 
 export interface FilterChoice {
     value: string;
     /** i18n key of its label */
     labelKey: string;
+    /** i18n key of what it finds, shown when you point at it */
+    tipKey?: string;
     /** Other words that find it when typed into the box */
     also?: string;
     test(e: FilterEntry, probe: FilterProbe): boolean;
@@ -119,67 +119,93 @@ export interface FilterGroup {
     choices: FilterChoice[];
     /** Offered even when a choice finds nothing */
     always?: boolean;
+    /** Listed on its own, without a group title (a single choice) */
+    flat?: boolean;
 }
 
-/** The fixed groups, in the order the box lists them (Tags come last, from the mods themselves) */
+/**
+ * The fixed groups, in the order the box lists them, following the columns (Status, then Tags).
+ * The tags of the mods themselves come right after Required by All.
+ */
 export const FILTER_GROUPS: FilterGroup[] = [
     {
         key: "source", labelKey: "Source", choices: [
-            {value: "source:Local", labelKey: "Local", test: e => e.mod.sourceType === "Local"},
+            {value: "source:Local", labelKey: "Local", tipKey: "filter.tip.local", test: e => e.mod.sourceType === "Local"},
             {value: "source:Modio", labelKey: "Modio", also: "modio mod.io", test: e => e.mod.sourceType === "Modio"},
             {value: "source:nexusmods", labelKey: "Nexus Mods", also: "nexus", test: e => e.mod.sourceType === "nexusmods"},
             {value: "source:modcat", labelKey: "ModCat", test: e => e.mod.sourceType === "modcat"},
-            {value: "source:pakhub", labelKey: "filter.pakHub", also: "pak hub repository", test: (e, p) => p.pakHub(e.mod)},
+            {
+                value: "source:pakhub", labelKey: "filter.pakHub", tipKey: "filter.tip.pakHub", also: "pak hub repository",
+                test: (e, p) => p.pakHub(e.mod),
+            },
         ],
     },
     {
         key: "enabled", labelKey: "filter.group.state", always: true, choices: [
-            {value: "enabled:true", labelKey: "filter.on", also: "enabled", test: e => e.enabled},
-            {value: "enabled:false", labelKey: "filter.off", also: "disabled", test: e => !e.enabled},
+            {value: "enabled:true", labelKey: "filter.enabled", also: "on", test: e => e.enabled},
+            {value: "enabled:false", labelKey: "filter.disabled", also: "off", test: e => !e.enabled},
         ],
     },
     {
-        key: "attention", labelKey: "filter.group.attention", choices: [
-            {value: "attn:update", labelKey: "filter.update", also: "update newer", test: hasUpdate},
-            {value: "attn:conflict", labelKey: "filter.conflict", also: "conflict", test: (e, p) => e.mod.modId != null && p.conflict(e.mod.modId)},
-            {value: "attn:missing", labelKey: "filter.missing", also: "missing not found", test: e => e.mod.status?.isLocalNotFound === true},
+        key: "approval", labelKey: "filter.group.status", choices: [
+            // bare values: what the box used before, and what a typed "verified" means too
+            {value: "Verified", labelKey: "Verified", tipKey: "filter.tip.verified", also: "mod.io", test: e => modioApproval(e.mod) === "Verified"},
+            {value: "Approved", labelKey: "Approved", tipKey: "filter.tip.approved", also: "mod.io", test: e => modioApproval(e.mod) === "Approved"},
+            {value: "Sandbox", labelKey: "Sandbox", tipKey: "filter.tip.sandbox", also: "mod.io", test: e => modioApproval(e.mod) === "Sandbox"},
+        ],
+    },
+    {
+        key: "required", labelKey: "RequiredByAll", flat: true, choices: [
             {
-                value: "attn:gone", labelKey: "filter.gone", also: "removed unavailable",
+                value: "required:all", labelKey: "RequiredByAll", tipKey: "filter.tip.required", also: "RequiredByAll required everyone",
+                test: e => hasTag(e.mod, REQUIRED_BY_ALL),
+            },
+        ],
+    },
+    {
+        key: "update", labelKey: "filter.update", flat: true, choices: [
+            {value: "attn:update", labelKey: "filter.update", tipKey: "filter.tip.update", also: "update newer", test: hasUpdate},
+        ],
+    },
+    {
+        key: "game", labelKey: "filter.oldGame", flat: true, choices: [
+            {value: "attn:oldgame", labelKey: "filter.oldGame", tipKey: "filter.tip.oldGame", also: "outdated game version", test: olderGameVersion},
+        ],
+    },
+    {
+        key: "problems", labelKey: "filter.group.problems", choices: [
+            {
+                value: "attn:conflict", labelKey: "filter.conflict", tipKey: "filter.tip.conflict", also: "conflict",
+                test: (e, p) => e.mod.modId != null && p.conflict(e.mod.modId),
+            },
+            {value: "attn:missing", labelKey: "filter.missing", tipKey: "filter.tip.missing", also: "missing not found", test: e => e.mod.status?.isLocalNotFound === true},
+            {
+                value: "attn:gone", labelKey: "filter.gone", tipKey: "filter.tip.gone", also: "removed unavailable",
                 test: e => ONLINE_SOURCES.has(e.mod.sourceType) && e.mod.status?.isOnlineAvailable === false,
             },
-            {value: "attn:oldgame", labelKey: "filter.oldGame", also: "outdated game version", test: olderGameVersion},
-        ],
-    },
-    {
-        key: "who", labelKey: "filter.group.who", choices: [
-            {value: "who:everyone", labelKey: "req.everyone", also: "RequiredByAll required everyone", test: (e, p) => whoNeeds(e, p) === 'everyone'},
-            {value: "who:host", labelKey: "req.hostOnly", also: "host", test: (e, p) => whoNeeds(e, p) === 'host'},
-            {value: "who:client", labelKey: "req.clientSide", also: "client", test: (e, p) => whoNeeds(e, p) === 'client'},
         ],
     },
     {
         key: "marks", labelKey: "filter.group.marks", choices: [
-            {value: "mark:note", labelKey: "filter.hasNote", also: "note", test: (e, p) => e.mod.modId != null && !!p.note(e.mod.modId).trim()},
             {
-                value: "mark:liked", labelKey: "filter.liked", also: "endorsed liked",
+                value: "mark:note", labelKey: "filter.hasNote", tipKey: "filter.tip.note", also: "note",
+                test: (e, p) => e.mod.modId != null && !!p.note(e.mod.modId).trim(),
+            },
+            {
+                value: "mark:liked", labelKey: "filter.liked", tipKey: "filter.tip.liked", also: "endorsed liked",
                 test: (e, p) => p.nexus(e.mod).endorsed || p.modio(e.mod).rating === 1,
             },
-            {value: "mark:disliked", labelKey: "filter.disliked", also: "disliked", test: (e, p) => p.modio(e.mod).rating === -1},
+            {value: "mark:disliked", labelKey: "filter.disliked", tipKey: "filter.tip.disliked", also: "disliked", test: (e, p) => p.modio(e.mod).rating === -1},
             {
-                value: "mark:followed", labelKey: "filter.followed", also: "tracked subscribed",
+                value: "mark:followed", labelKey: "filter.followed", tipKey: "filter.tip.followed", also: "tracked subscribed",
                 test: (e, p) => p.nexus(e.mod).tracked || p.modio(e.mod).subscribed,
             },
         ],
     },
-    {
-        key: "approval", labelKey: "filter.group.approval", choices: [
-            // bare values: what the box used before, and what a typed "verified" means too
-            {value: "Verified", labelKey: "Verified", test: e => e.mod.approvalStatus === "Verified"},
-            {value: "Approved", labelKey: "Approved", test: e => e.mod.approvalStatus === "Approved"},
-            {value: "Sandbox", labelKey: "Sandbox", test: e => e.mod.approvalStatus === "Sandbox"},
-        ],
-    },
 ];
+
+/** Where the tags go among the groups: right after this one */
+export const TAGS_AFTER_GROUP = "required";
 
 const CHOICES = new Map<string, { group: string; choice: FilterChoice }>();
 for (const group of FILTER_GROUPS) {
@@ -230,7 +256,7 @@ export function matchesFilters(filters: readonly (string | undefined)[] | undefi
     const name = (mod.displayName || mod.originalName || "").toLocaleLowerCase();
     const nameId = (mod.nameId || "").toLocaleLowerCase();
     const tags = (mod.tags || []).map(tag => String(tag).toLocaleLowerCase());
-    const approval = (mod.approvalStatus || "").toLocaleLowerCase();
+    const approval = modioApproval(mod).toLocaleLowerCase();
     let note: string | undefined;
     return words.every(word => {
         const w = word.trim().toLocaleLowerCase();

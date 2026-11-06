@@ -12,15 +12,14 @@ import {Select, SelectProps} from "antd";
 import {SearchOutlined} from "@ant-design/icons";
 import {useTranslation} from "react-i18next";
 import {TreeViewConverter} from "@/pages/HomePage/TreeViewConverter.ts";
-import {choiceCounts, FILTER_GROUPS, filterChoice, filterGroupOf, TAG_PREFIX, tagCounts} from "@/services/ModFilters";
+import {choiceCounts, FILTER_GROUPS, filterChoice, filterGroupOf, TAG_PREFIX, TAGS_AFTER_GROUP, tagCounts} from "@/services/ModFilters";
 import {liveFilterProbe} from "@/services/ModFilterProbe";
 import {ModNotes} from "@/services/ModNotes";
 import {ModSupport} from "@/services/ModSupport";
 import {ConflictService} from "@/services/ConflictService";
 import {RepositoryUpdates} from "@/services/RepositoryUpdates";
-import {PostFacts} from "@/services/PostFacts";
 
-// the list's filters look up notes, marks, conflicts and Pak Hub posts in the app's stores
+// the list's filters look up notes, marks, conflicts and Pak Hub links in the app's stores
 TreeViewConverter.probe = liveFilterProbe;
 
 type FilterOptionGroup = NonNullable<SelectProps["options"]>;
@@ -34,6 +33,8 @@ interface FilterOption {
     typed?: boolean;
     /** What typing finds it by */
     search: string;
+    /** What it finds (shown when you point at it) */
+    title?: string;
 }
 
 type Translate = (key: string, options?: Record<string, unknown>) => unknown;
@@ -53,31 +54,41 @@ function buildFilterOptions(t: Translate, picked: string[]): FilterOptionGroup {
     const entries = TreeViewConverter.profileEntries;
     const counts = choiceCounts(entries, TreeViewConverter.probe);
     const pickedSet = new Set(picked);
-    const groups: FilterOptionGroup = [];
+    const list: FilterOptionGroup = [];
     for (const group of FILTER_GROUPS) {
         const options: FilterOption[] = group.choices
             .filter(c => group.always || (counts.get(c.value) ?? 0) > 0 || pickedSet.has(c.value))
             .map(c => {
                 const label = String(t(c.labelKey));
-                return {value: c.value, label, count: counts.get(c.value) ?? 0, search: `${label} ${c.also ?? ""}`};
+                const tip = c.tipKey ? String(t(c.tipKey)) : label;
+                return {value: c.value, label, title: tip, count: counts.get(c.value) ?? 0, search: `${label} ${c.also ?? ""}`};
             });
         if (options.length) {
-            const label = String(t(group.labelKey));
-            groups.push({label, title: label, search: label, options});
+            if (group.flat) {
+                list.push(...options);
+            } else {
+                const label = String(t(group.labelKey));
+                list.push({label, title: label, search: label, options});
+            }
         }
+        if (group.key === TAGS_AFTER_GROUP) list.push(...tagGroup(t, entries, picked));
     }
+    return list;
+}
+
+/** The tags of the profile's mods, as in the Tags column (and picked ones no mod has any more) */
+function tagGroup(t: Translate, entries: typeof TreeViewConverter.profileEntries, picked: string[]): FilterOptionGroup {
     const tags = tagCounts(entries);
-    const tagOptions: FilterOption[] = tags.map(({tag, count}) => ({value: TAG_PREFIX + tag, label: tag, count, search: tag}));
+    const options: FilterOption[] = tags.map(({tag, count}) => ({value: TAG_PREFIX + tag, label: tag, title: tag, count, search: tag}));
     for (const value of picked) {
-        if (value.startsWith(TAG_PREFIX) && !tagOptions.some(o => o.value === value)) {
-            tagOptions.push({value, label: value.slice(TAG_PREFIX.length), count: 0, search: value.slice(TAG_PREFIX.length)});
+        if (value.startsWith(TAG_PREFIX) && !options.some(o => o.value === value)) {
+            const tag = value.slice(TAG_PREFIX.length);
+            options.push({value, label: tag, title: tag, count: 0, search: tag});
         }
     }
-    if (tagOptions.length) {
-        const label = String(t("Tags"));
-        groups.push({label, title: label, search: label, options: tagOptions});
-    }
-    return groups;
+    if (options.length === 0) return [];
+    const label = String(t("Tags"));
+    return [{label, title: label, search: label, options}];
 }
 
 /** Words typed (not picked filters) shown as choices at the top, so their chips have names */
@@ -118,19 +129,18 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
     /** Bumped when the typed word comes back into the box, to select it */
     const [selectWord, setSelectWord] = React.useState(0);
 
-    // the counts follow notes, marks, conflicts and Pak Hub posts while the list is open
+    // the counts follow notes, marks, conflicts and Pak Hub updates while the list is open
     const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
     const supportVersion = useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
     const conflictVersion = useSyncExternalStore(ConflictService.subscribe, ConflictService.version);
     const repoVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
-    const factsVersion = useSyncExternalStore(PostFacts.subscribe, PostFacts.version);
 
     // counted when the list opens and when those stores change, not on every key
     const fixedOptions = React.useMemo<FilterOptionGroup>(() => {
         const picked = searchValue ?? [];
         return open || picked.length ? buildFilterOptions(t, picked) : [];
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [t, searchValue, open, openCount, notesVersion, supportVersion, conflictVersion, repoVersion, factsVersion]);
+    }, [t, searchValue, open, openCount, notesVersion, supportVersion, conflictVersion, repoVersion]);
     const searchOptions = React.useMemo<FilterOptionGroup>(() => {
         const typed = typedOptions([...(searchValue ?? []), ...(searchKeyword.trim() ? [searchKeyword.trim()] : [])]);
         return typed.length ? [...typed, ...fixedOptions] : fixedOptions;
@@ -255,6 +265,7 @@ export const SearchBox = ({onUpdateTreeView}: SearchBoxProps) => {
                     maxTagCount="responsive"
                     listHeight={360}
                     popupMatchSelectWidth={320}
+                    classNames={{popup: {root: "mod-filter-popup"}}}
                     optionRender={(option) => {
                         const data = option.data as FilterOption;
                         if (data.typed) {
