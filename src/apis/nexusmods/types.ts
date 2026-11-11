@@ -13,6 +13,8 @@ export interface NexusModsParsedUrl {
     userId?: number;
     rawUrl?: string;
     directDownloadUrl?: string;
+    /** The link asks to add its file as an entry of its own, next to the mod's main file */
+    separate?: boolean;
 }
 
 export interface NexusModsSearchParams {
@@ -74,7 +76,7 @@ export interface NexusModsModNode {
     updatedAt?: string;
     game?: NexusModsGameRef;
     uploader?: NexusModsUserRef;
-    /** The files the page lists now, main download first (filled in after a search) */
+    /** All files of the page, also old and archived uploads (filled in after a search) */
     files?: import('./files').NexusFileInfo[];
 }
 

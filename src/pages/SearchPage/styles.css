@@ -357,3 +357,13 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+
+/* file picker: the box at the first line of a long entry */
+.search-result-file-choice.ant-checkbox-wrapper {
+    align-items: flex-start;
+}
+
+.search-result-file-choice .ant-checkbox {
+    margin-top: 3px;
+    align-self: flex-start;
+}

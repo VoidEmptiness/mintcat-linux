@@ -228,6 +228,8 @@ export class CheckModUpdateTask implements ITask {
 
         if (nexusMods.length > 0) {
             await context.setMessage(`Checking Nexus Mods... (${nexusMods.length} ${t('mods')})`);
+            // which files each page has, in one request per game: the check follows each mod's file
+            await NexusModsApi.prefetchFiles(nexusMods);
             for (const mod of nexusMods) {
                 if (context.checkCancelled()) {
                     throw new Error('Task cancelled');

@@ -138,8 +138,8 @@ export class HomeService {
      */
     private async rememberNexusFile(url: string): Promise<void> {
         const parsed = NexusModsApi.parseModLinks(url);
-        // a plain page link keeps what was picked before
-        if (!parsed?.fileId) return;
+        // a plain page link keeps what was picked before; an add-on entry follows its own file
+        if (!parsed?.fileId || parsed.separate) return;
         try {
             const files = await NexusModsApi.getFileList(parsed.domain, parsed.modId);
             await NexusFileChoice.set(parsed.domain, parsed.modId, choiceFor(files, parsed.fileId));
@@ -160,27 +160,33 @@ export class HomeService {
         const modsApi = await StorageAPI.getMods();
         const profiles = await StorageAPI.getProfiles();
 
-        const existingByPlatform = await modsApi.getModByPlatformId(parsed.modId, NEXUSMODS_PLATFORM);
-        if (existingByPlatform) {
+        // An add-on file added as an entry of its own is found by its file's link; the mod's main
+        // entry by the page's link (which also tells Deep Rock Galactic and Rogue Core mods apart)
+        const separate = !!(parsed.separate && parsed.fileId);
+        const entryUrl = separate ? NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, parsed.fileId!) : undefined;
+        const existing = entryUrl
+            ? await modsApi.getModByUrl(entryUrl)
+            : await ModService.findNexusMainEntry(parsed.domain, parsed.modId);
+        if (existing) {
             if (downloadAfterAdd) {
                 await modsApi.upsertModDownload({
-                    modId: existingByPlatform.modId!,
+                    modId: existing.modId!,
                     downloadUrl: url,
                     downloadStatus: "pending",
                     downloadProgress: 0,
                 });
             }
             const mod = downloadAfterAdd
-                ? await modsApi.getCompleteModData(existingByPlatform.modId!) ?? undefined
+                ? await modsApi.getCompleteModData(existing.modId!) ?? undefined
                 : undefined;
-            const existingProfileMod = await profiles.getProfileMod(profile.id!, existingByPlatform.modId!);
+            const existingProfileMod = await profiles.getProfileMod(profile.id!, existing.modId!);
             if (existingProfileMod) {
-                return { status: "exists", modName: existingByPlatform.displayName, mod, downloadAfterAdd };
+                return { status: "exists", modName: existing.displayName, mod, downloadAfterAdd };
             }
 
             await this.addModToProfile({
                 profileId: profile.id!,
-                modId: existingByPlatform.modId!,
+                modId: existing.modId!,
                 groupId,
                 usedVersion: "",
             });
@@ -193,36 +199,7 @@ export class HomeService {
             return { status: "invalid" };
         }
 
-        const canonicalUrl = NexusModsApi.getModUrl(modInfoResp.domain, modInfoResp.modId);
-        const existingByUrl = await modsApi.getModByUrl(canonicalUrl);
-        if (existingByUrl) {
-            if (downloadAfterAdd) {
-                await modsApi.upsertModDownload({
-                    modId: existingByUrl.modId!,
-                    downloadUrl: url,
-                    downloadStatus: "pending",
-                    downloadProgress: 0,
-                });
-            }
-            const mod = downloadAfterAdd
-                ? await modsApi.getCompleteModData(existingByUrl.modId!) ?? undefined
-                : undefined;
-            const existingProfileMod = await profiles.getProfileMod(profile.id!, existingByUrl.modId!);
-            if (existingProfileMod) {
-                return { status: "exists", modName: modInfoResp.mod.name || "", mod, downloadAfterAdd };
-            }
-
-            await this.addModToProfile({
-                profileId: profile.id!,
-                modId: existingByUrl.modId!,
-                groupId,
-                usedVersion: "",
-            });
-
-            return { status: "added", mod, downloadAfterAdd };
-        }
-
-        const mod = await ModService.addModFromNexusmods(modInfoResp, profile.id!, groupId);
+        const mod = await ModService.addModFromNexusmods(modInfoResp, profile.id!, groupId, entryUrl);
         return { status: "added", mod, downloadAfterAdd };
     }
 

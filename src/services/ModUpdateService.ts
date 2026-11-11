@@ -571,7 +571,11 @@ export class ModUpdateService {
             return;
         }
 
-        const dto = ModMapper.fromNexusmodsResponse(resolved);
+        // an add-on file's own entry keeps being that entry, on its file's newest upload
+        const entryUrl = NexusModsApi.isFileEntryUrl(mod.url) && resolved.file
+            ? NexusModsApi.getModFileUrl(resolved.domain, resolved.modId, NexusModsApi.getFileId(resolved.file))
+            : undefined;
+        const dto = ModMapper.fromNexusmodsResponse(resolved, entryUrl);
         await modsApi.updateMod(mod.modId!, {
             platformId: dto.platformId,
             nameId: dto.nameId,

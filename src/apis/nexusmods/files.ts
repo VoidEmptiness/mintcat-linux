@@ -137,3 +137,37 @@ export function isChosenFile(file: NexusFileInfo, choice: NexusFileChoiceRecord 
     if (choice.groupId && file.groupId) return choice.groupId === file.groupId;
     return choice.fileId === file.fileId;
 }
+
+/**
+ * The upload an entry should be on now. `ownFileId`: the file it has (its single-file link, or
+ * the file it last downloaded); `choice`: what was picked for the mod. Newer uploads of the
+ * same file are followed. When the file is gone from the page with no newer upload: an entry
+ * for one file, or a picked file, stays on it; otherwise the page's main download is used (or
+ * its only file), and with several files and no main download it stays (rather than guessing
+ * between e.g. an English and a Chinese version).
+ */
+export function trackedFile(files: readonly NexusFileInfo[] | undefined, ownFileId: number | undefined,
+                            choice?: NexusFileChoiceRecord, fixed = false): NexusFileInfo | undefined {
+    const all = files ?? [];
+    const own = ownFileId ? all.find(f => f.fileId === ownFileId) : undefined;
+    const anchor = choice ?? (own ? {fileId: own.fileId, groupId: own.groupId, name: own.name} : undefined);
+    if (!anchor) return undefined;
+    const current = currentFiles(all);
+    const next = followChoice(all, anchor);
+    if (next && current.some(f => f.fileId === next.fileId)) return next;
+    if (!choice && !fixed) {
+        const primary = current.find(f => f.primary);
+        if (primary) return primary;
+        if (current.length === 1) return current[0];
+    }
+    return next;
+}
+
+/** The Nexus file id in the name MINTCAT gave a download ("nexusmods-<domain>-<mod>-<file>-…") */
+export function fileIdOfDownload(path: string | undefined, domain: string, modId: number): number | undefined {
+    const name = (path ?? '').split(/[\\/]/).pop() ?? '';
+    const prefix = `nexusmods-${domain.toLowerCase()}-${modId}-`;
+    if (!name.toLowerCase().startsWith(prefix)) return undefined;
+    const id = Number(/^(\d+)-/.exec(name.slice(prefix.length))?.[1]);
+    return id > 0 ? id : undefined;
+}

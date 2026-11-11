@@ -535,10 +535,17 @@ function ModTreeViewVersionSelect({nodeData}) {
                         .filter(file => NexusModsApi.getFileId(file) > 0)
                         .sort((a, b) => (b.uploaded_timestamp ?? 0) - (a.uploaded_timestamp ?? 0));
                     const latestFileId = NexusModsApi.getFileId(nexusFiles[0]);
+                    // several files on the page (e.g. a version without mini-icons): name them too,
+                    // or the same version number shows up once per file
+                    const currentNames = new Set(nexusFiles
+                        .filter(file => !['OLD_VERSION', 'ARCHIVED', 'REMOVED'].includes((file.category_name || '').toUpperCase()))
+                        .map(file => (file.name || '').trim()));
+                    const withName = currentNames.size > 1;
 
                     for (const file of nexusFiles) {
                         const fileId = NexusModsApi.getFileId(file);
-                        const label = getNexusmodsFileLabel(file, modInfo?.version, latestFileId);
+                        const base = getNexusmodsFileLabel(file, modInfo?.version, latestFileId);
+                        const label = withName && file.name && file.name.trim() !== base ? `${base} · ${file.name.trim()}` : base;
                         optionList.push({
                             value: JSON.stringify({
                                 ...file,

@@ -132,9 +132,11 @@ export class ModMapper {
     /**
      * 从 Nexus Mods API 响应转换到 CompleteModData
      */
-    static fromNexusmodsResponse(resolved: NexusModsResolvedMod): CompleteModData {
+    /** `entryUrl`: an entry for this one file of the mod (an add-on next to its main file) */
+    static fromNexusmodsResponse(resolved: NexusModsResolvedMod, entryUrl?: string): CompleteModData {
         const { domain, modId, mod, file } = resolved;
-        const modName = mod.name || "";
+        const fileName = file?.name?.trim();
+        const modName = entryUrl && fileName ? `${mod.name || ""}: ${fileName}` : (mod.name || "");
         const version = file?.version || mod.version || "-";
         const fileSize = NexusModsApi.getFileSizeBytes(file);
         const onlineUpdateDate = file?.uploaded_timestamp
@@ -147,10 +149,10 @@ export class ModMapper {
             modId: undefined,
             platformId: modId,
             gameId: 1,
-            nameId: String(modId),
+            nameId: entryUrl ? `${modId}-${NexusModsApi.getFileId(file)}` : String(modId),
             displayName: modName,
             originalName: modName,
-            url: NexusModsApi.getModUrl(domain, modId),
+            url: entryUrl || NexusModsApi.getModUrl(domain, modId),
             sourceType: NEXUSMODS_PLATFORM,
             // Nexus has categories, not mod.io-style tags; its category is the tag
             tags: resolved.category ? [resolved.category] : [],

@@ -4,7 +4,7 @@
  * the main one), a Pak Hub post with several uploads. Clicking a file adds that one.
  */
 import React, {useState, useSyncExternalStore} from "react";
-import {Flex, Radio, Tag, Tooltip, Typography} from "antd";
+import {Checkbox, Flex, Tag, Tooltip, Typography} from "antd";
 import {CheckCircleFilled} from "@ant-design/icons";
 import {t} from "i18next";
 import {SearchSource, type SearchResultItem} from "@/apis/search";
@@ -12,7 +12,7 @@ import type {NexusModsModNode} from "@/apis/nexusmods/types";
 import {currentFiles, isChosenFile, type NexusFileChoiceRecord, type NexusFileInfo} from "@/apis/nexusmods/files";
 import {NexusModsApi} from "@/apis/nexusmods";
 import {NexusFileChoice} from "@/services/NexusFileChoice";
-import type {ListedState} from "@/services/ListedMods";
+import type {ListedIndex, ListedState} from "@/services/ListedMods";
 import {safeModFileName, type RepositoryFile, type RepositoryModDetail} from "@/apis/repositories";
 import {MessageBox} from "@/components/MessageBox";
 
@@ -61,6 +61,18 @@ export function nexusFilesOf(item: SearchResultItem): NexusFileInfo[] {
     return files.length > 1 ? files : [];
 }
 
+/**
+ * The file a Nexus mod's entry has, by name: also one no longer listed on the page (e.g. an
+ * upload the author archived). Undefined when not known.
+ */
+export function nexusOwnFileName(item: SearchResultItem, index: ListedIndex | undefined): string | undefined {
+    if (item.source !== SearchSource.NEXUSMODS) return undefined;
+    const all = (item.rawData as NexusModsModNode | undefined)?.files ?? [];
+    const own = all.find(f => !!index?.get({source: 'nexusFile', id: `${item.platformId}-${f.fileId}`})?.inActiveProfile);
+    if (!own) return undefined;
+    return currentFiles(all).some(f => f.fileId === own.fileId) ? own.name : t("files.noLongerListed", {name: own.name});
+}
+
 /** The Pak Hub uploads to show (none when there is only one) */
 export function repoFilesOf(detail: RepositoryModDetail | undefined): RepositoryFile[] {
     const files = (detail?.files ?? []).filter(f => safeModFileName(f.filename));
@@ -71,6 +83,18 @@ export function repoFilesOf(detail: RepositoryModDetail | undefined): Repository
 function nexusIdOf(item: SearchResultItem): { domain: string; modId: number } | null {
     const parsed = NexusModsApi.parseModLinks(item.profileUrl);
     return parsed ? {domain: parsed.domain, modId: parsed.modId} : null;
+}
+
+/**
+ * The files of a Nexus card that are in your list: the files entries downloaded or have links
+ * for; when none of them is listed now (e.g. not downloaded yet), the one picked or the main download
+ */
+export function nexusFilesInUse(item: SearchResultItem, files: NexusFileInfo[], index: ListedIndex | undefined,
+                                inList: boolean, choice: NexusFileChoiceRecord | undefined): Set<number> {
+    const listedFile = (f: NexusFileInfo) => !!index?.get({source: 'nexusFile', id: `${item.platformId}-${f.fileId}`})?.inActiveProfile;
+    const exact = files.filter(listedFile).map(f => f.fileId);
+    if (!inList || exact.length > 0) return new Set(exact);
+    return new Set(files.filter(f => isChosenFile(f, choice)).map(f => f.fileId));
 }
 
 /**
@@ -109,9 +133,11 @@ function RepoFileTip({file}: { file: RepositoryFile }) {
     );
 }
 
-export function CardFiles({item, listed, repoDetail, onPick}: {
+export function CardFiles({item, listed, index, repoDetail, onPick}: {
     item: SearchResultItem;
     listed?: ListedState;
+    /** Your lists (an add-on file can be in it as an entry of its own) */
+    index?: ListedIndex;
     repoDetail?: RepositoryModDetail;
     onPick: (pick: FilePick) => void;
 }) {
@@ -125,6 +151,7 @@ export function CardFiles({item, listed, repoDetail, onPick}: {
 
     const inList = !!listed?.inActiveProfile;
     const choice = nexusChoiceOf(item, choiceVersion);
+    const inUseIds = nexusFilesInUse(item, nexusFiles, index, inList, choice);
     const visible = expanded ? count : Math.min(count, SHOWN);
 
     return (
@@ -133,7 +160,7 @@ export function CardFiles({item, listed, repoDetail, onPick}: {
                 <Typography.Text type="secondary">{t("files.label")}</Typography.Text>
             </Tooltip>
             {nexusFiles.slice(0, visible).map(file => {
-                const inUse = inList && isChosenFile(file, choice);
+                const inUse = inUseIds.has(file.fileId);
                 return (
                     <Tooltip key={file.fileId} title={<NexusFileTip file={file} state={inUse ? "inUse" : inList ? "switch" : "add"}/>}>
                         <Tag color={inUse ? "success" : undefined}
@@ -166,47 +193,66 @@ export function CardFiles({item, listed, repoDetail, onPick}: {
     );
 }
 
-function NexusFileChoices({files, initial, onChange}: {
+function NexusFileChoices({files, initial, locked, inList, onChange}: {
     files: NexusFileInfo[];
-    initial: number;
-    onChange: (fileId: number) => void;
+    initial: number[];
+    /** The mod is in your list already */
+    inList: boolean;
+    /** Already in your list (shown ticked, can't be unticked) */
+    locked: number[];
+    onChange: (fileIds: number[]) => void;
 }) {
-    const [value, setValue] = useState(initial);
+    const [value, setValue] = useState<number[]>(initial);
+    const toggle = (fileId: number, on: boolean) => {
+        // in the page's order, so the first ticked one is the main entry
+        const next = files.map(f => f.fileId).filter(id => id === fileId ? on : value.includes(id));
+        setValue(next);
+        onChange(next);
+    };
     return (
         <Flex vertical gap={6} style={{marginTop: 8}}>
-            <Typography.Text type="secondary" style={{fontSize: 12}}>{t("files.chooseHint")}</Typography.Text>
-            <Radio.Group value={value}
-                         onChange={(e) => {
-                             setValue(e.target.value);
-                             onChange(e.target.value);
-                         }}
-                         style={{display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto"}}>
-                {files.map(file => (
-                    <Radio key={file.fileId} value={file.fileId}>
-                        <span style={{wordBreak: "break-word"}}>{file.name}</span>
-                        <Tag color={file.primary ? "green" : undefined} style={{marginInlineStart: 6}}>{categoryText(file)}</Tag>
-                        <Typography.Text type="secondary" style={{fontSize: 12}}>
-                            {[file.version ? versionText(file.version) : "", formatSize(file.sizeBytes), formatTime(file.date * 1000)].filter(Boolean).join(" · ")}
-                        </Typography.Text>
-                        {file.description && (
-                            <div className="search-result-file-choice-text">{file.description}</div>
-                        )}
-                    </Radio>
-                ))}
-            </Radio.Group>
+            <Typography.Text type="secondary" style={{fontSize: 12}}>
+                {t(inList ? "files.chooseHintInList" : "files.chooseHint")}
+            </Typography.Text>
+            <Flex vertical gap={8} style={{maxHeight: 360, overflowY: "auto"}}>
+                {files.map(file => {
+                    const isLocked = locked.includes(file.fileId);
+                    return (
+                        <Checkbox key={file.fileId}
+                                  className="search-result-file-choice"
+                                  checked={isLocked || value.includes(file.fileId)}
+                                  disabled={isLocked}
+                                  onChange={(e) => toggle(file.fileId, e.target.checked)}>
+                            <span style={{wordBreak: "break-word"}}>{file.name}</span>
+                            <Tag color={file.primary ? "green" : undefined} style={{marginInlineStart: 6}}>{categoryText(file)}</Tag>
+                            {isLocked && <Tag color="success" icon={<CheckCircleFilled/>}>{t("files.inYourList")}</Tag>}
+                            <Typography.Text type="secondary" style={{fontSize: 12}}>
+                                {[file.version ? versionText(file.version) : "", formatSize(file.sizeBytes), formatTime(file.date * 1000)].filter(Boolean).join(" · ")}
+                            </Typography.Text>
+                            {file.description && (
+                                <div className="search-result-file-choice-text">{file.description}</div>
+                            )}
+                        </Checkbox>
+                    );
+                })}
+            </Flex>
         </Flex>
     );
 }
 
-/** Ask which file of a Nexus mod to add; null when cancelled */
-export async function askNexusFile(modName: string, files: NexusFileInfo[], initial: number): Promise<number | null> {
+/**
+ * Ask which file(s) of a Nexus mod to add; null when cancelled. The first ticked file becomes
+ * the mod's entry, the others entries of their own. `locked`: files already in your list.
+ */
+export async function askNexusFiles(modName: string, files: NexusFileInfo[], initial: number[], locked: number[] = [],
+                                    inList = locked.length > 0): Promise<number[] | null> {
     let picked = initial;
     const ok = await MessageBox.confirm({
         title: t("files.chooseTitle", {name: modName}),
         icon: null,
-        width: 560,
+        width: 600,
         okText: t("files.chooseOk"),
-        content: <NexusFileChoices files={files} initial={initial} onChange={(id) => (picked = id)}/>,
+        content: <NexusFileChoices files={files} initial={initial} locked={locked} inList={inList} onChange={(ids) => (picked = ids)}/>,
     });
-    return ok ? picked : null;
+    return ok ? picked.filter(id => !locked.includes(id)) : null;
 }

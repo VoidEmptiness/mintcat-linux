@@ -15,7 +15,8 @@ import Search from 'antd/es/input/Search';
 import {t} from 'i18next';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {SearchResultCard} from './SearchResultCard';
-import {askNexusFile, nexusChoiceOf, nexusFilesOf, type FilePick} from './CardFiles';
+import {askNexusFiles, nexusChoiceOf, nexusFilesInUse, nexusFilesOf, nexusOwnFileName, type FilePick} from './CardFiles';
+import {MessageBox} from '@/components/MessageBox';
 import {isChosenFile} from '@/apis/nexusmods/files';
 import {useSearchViewModel} from './useSearchViewModel';
 import type {SearchSortBy, SearchSortOrder} from './SearchViewModel';
@@ -349,16 +350,49 @@ export function SearchPage() {
 
     const handleAdd = useCallback(async (item: SearchResultItem, pick?: FilePick) => {
         try {
-            // a Nexus mod with more than one file: which one (unless one was clicked on the card)
-            let nexusFileId = pick?.nexusFileId;
-            if (!nexusFileId && item.source === SearchSource.NEXUSMODS) {
+            // A Nexus mod with more than one file: which one(s). The first becomes the mod's entry;
+            // more (add-ons) become entries of their own, as does a file added to a mod already in the list
+            const listedNow = await buildListedIndex();
+            let nexusPicks: { fileId: number; separate: boolean }[] = [];
+            if (item.source === SearchSource.NEXUSMODS) {
                 const files = nexusFilesOf(item);
-                if (files.length > 0) {
-                    const choice = nexusChoiceOf(item);
-                    const initial = files.find(f => isChosenFile(f, choice)) ?? files[0];
-                    const answer = await askNexusFile(item.nameTrans || item.name, files, initial.fileId);
+                const inList = !!listedNow.get(listedKeyOf(item))?.inActiveProfile;
+                const choice = nexusChoiceOf(item);
+                const inUse = [...nexusFilesInUse(item, files, listedNow, inList, choice)];
+                const name = item.nameTrans || item.name;
+                if (pick?.nexusFileId) {
+                    const file = files.find(f => f.fileId === pick.nexusFileId);
+                    if (file && inList && !inUse.includes(file.fileId)) {
+                        const current = nexusOwnFileName(item, listedNow)
+                            ?? (files.find(f => inUse.includes(f.fileId)) ?? files.find(f => isChosenFile(f, choice)))?.name;
+                        const answer = await MessageBox.choose({
+                            title: t("files.inListTitle", {name}),
+                            content: current
+                                ? t("files.inListText", {file: file.name, current})
+                                : t("files.inListTextUnknown", {file: file.name}),
+                            width: 560,
+                        }, [
+                            // an optional / update / other file is usually an add-on; a main file a variant
+                            {key: 'separate', label: t("files.addSeparate"), primary: file.category !== 'MAIN'},
+                            {key: 'replace', label: t("files.useInstead"), primary: file.category === 'MAIN'},
+                        ], t("Cancel"));
+                        if (!answer) return;
+                        nexusPicks = [{fileId: file.fileId, separate: answer === 'separate'}];
+                    } else {
+                        // in use already: added again the same way (the list says it's there)
+                        const ownEntry = !!listedNow.get({source: 'nexusFile', id: `${item.platformId}-${pick.nexusFileId}`})?.inActiveProfile
+                            && !files.some(f => f.fileId === pick.nexusFileId && isChosenFile(f, choice));
+                        nexusPicks = [{fileId: pick.nexusFileId, separate: ownEntry}];
+                    }
+                } else if (files.length > 0) {
+                    const initial = inList ? [] : [(files.find(f => isChosenFile(f, choice)) ?? files[0]).fileId];
+                    const answer = await askNexusFiles(name, files, initial, inUse, inList);
                     if (answer === null) return;
-                    nexusFileId = answer;
+                    if (answer.length === 0) {
+                        message.info(t("files.nothingPicked"));
+                        return;
+                    }
+                    nexusPicks = answer.map((fileId, i) => ({fileId, separate: inList || i > 0}));
                 }
             }
 
@@ -374,7 +408,7 @@ export function SearchPage() {
                     })()
                     : undefined;
                 detailForName = detail;
-                plan = await planFor(item, await buildListedIndex(), detail, 'all');
+                plan = await planFor(item, listedNow, detail, 'all');
             } catch (error) {
                 console.warn('[SearchPage] requirements not checked', error);
             }
@@ -395,15 +429,18 @@ export function SearchPage() {
                 const node = item.rawData as NexusModsModNode | undefined;
                 const gameId = node?.gameId || Number(node?.game?.id) || undefined;
                 const parsed = NexusModsApi.parseModLinks(item.profileUrl);
-                const pageUrl = nexusFileId && parsed
-                    ? NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, nexusFileId)
-                    : item.profileUrl;
-                const link = await nexusAddLink(pageUrl, gameId);
-                if (!link) {
-                    message.info(t('nexusmods.windowClosed'));
-                    return;
+                const pages = nexusPicks.length > 0 && parsed
+                    ? nexusPicks.map(p => NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, p.fileId, p.separate))
+                    : [item.profileUrl];
+                for (const pageUrl of pages) {
+                    const link = await nexusAddLink(pageUrl, gameId);
+                    if (!link) {
+                        message.info(t('nexusmods.windowClosed'));
+                        if (links.length === 0) return;
+                        break;
+                    }
+                    links.push(link);
                 }
-                links.push(link);
             } else {
                 links.push(item.profileUrl);
             }

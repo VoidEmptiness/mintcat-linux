@@ -22,7 +22,7 @@ import {
     type NexusModsSearchResult,
     type NexusModsV1Mod,
 } from './types';
-import { currentFiles, followChoice, NEXUS_FILE_FIELDS, toFileInfo, type NexusFileInfo } from './files';
+import { fileIdOfDownload, NEXUS_FILE_FIELDS, toFileInfo, trackedFile, type NexusFileInfo } from './files';
 import { NexusFileChoice } from '@/services/NexusFileChoice';
 
 
@@ -53,6 +53,10 @@ const NEXUSMODS_APP_NAME = 'MintCat';
 const NEXUSMODS_APP_VERSION = '0.5.5';
 
 const authResolver = new AuthResolver();
+
+/** Marks a Files-tab link that adds its file as an entry of its own */
+const SEPARATE_PARAM = 'mintcat_entry';
+const SEPARATE_VALUE = 'separate';
 
 /** The files of mods looked at recently ("<gameId>:<modId>"), so paging back and forth asks once */
 const fileCache = new Map<string, { at: number; files: NexusFileInfo[] }>();
@@ -249,6 +253,7 @@ export class NexusModsApi {
                         modId,
                         fileId: fileIdFromPath || fileIdFromQuery,
                         rawUrl: value,
+                        ...(parsed.searchParams.get(SEPARATE_PARAM) === SEPARATE_VALUE ? {separate: true} : {}),
                     };
                 }
             }
@@ -259,10 +264,13 @@ export class NexusModsApi {
                 const modId = Number(hash.get('mintcat_mod_id') || 0);
                 const fileId = Number(hash.get('mintcat_file_id') || 0) || undefined;
                 if (domain && Number.isFinite(modId) && modId > 0) {
+                    // the page it was captured from may ask for an entry of its own
+                    const separate = (hash.get('mintcat_profile_url') || '').includes(`${SEPARATE_PARAM}=${SEPARATE_VALUE}`);
                     return {
                         domain,
                         modId,
                         fileId,
+                        ...(separate ? {separate: true} : {}),
                         expires: Number(parsed.searchParams.get('expires') || 0) || undefined,
                         userId: Number(parsed.searchParams.get('user_id') || 0) || undefined,
                         rawUrl: value,
@@ -441,7 +449,7 @@ export class NexusModsApi {
             const byKey = await NexusModsApi.getFilesForMods(nodes.map(n => ({gameId: n.gameId || n.game?.id, modId: n.modId})));
             for (const node of nodes) {
                 const files = byKey.get(`${Number(node.gameId || node.game?.id)}:${Number(node.modId)}`);
-                if (files) node.files = currentFiles(files);
+                if (files) node.files = files;
             }
         } catch (error) {
             console.warn('[NexusModsApi] files not read:', error instanceof Error ? error.message : error);
@@ -504,11 +512,20 @@ export class NexusModsApi {
         return files;
     }
 
-    /** The mod page's Files tab with one file picked (what the Add Mod window and downloads take) */
-    public static getModFileUrl(domain: string, modId: number, fileId: number): string {
+    /**
+     * The mod page's Files tab with one file picked (what the Add Mod window and downloads take).
+     * `separate`: add that file as an entry of its own (an add-on next to the main file).
+     */
+    public static getModFileUrl(domain: string, modId: number, fileId: number, separate = false): string {
         const url = new URL(NexusModsApi.getModFilesUrl(domain, modId));
         url.searchParams.set('file_id', String(fileId));
+        if (separate) url.searchParams.set(SEPARATE_PARAM, SEPARATE_VALUE);
         return url.toString();
+    }
+
+    /** Whether a mod's link is an entry for one file of the page (see getModFileUrl's `separate`) */
+    public static isFileEntryUrl(url: string | undefined): boolean {
+        return !!url && /[?&]file_id=\d+/.test(url) && /nexusmods\.com\//i.test(url);
     }
 
     /**
@@ -687,22 +704,51 @@ export class NexusModsApi {
         return id;
     }
 
+    /**
+     * The mod as Nexus has it now, for the file this entry follows: an entry for one file (its link
+     * names the file), a file picked for the mod, or the file it last downloaded. Newer uploads of
+     * that file count as its updates; another file of the page (e.g. a version in another
+     * language) never does. Without any of these: the page's main download, as before.
+     */
     public static async refreshResolvedMod(mod: CompleteModData): Promise<NexusModsResolvedMod | null> {
         const parsed = NexusModsApi.parseModLinks(mod.url || '');
         if (!parsed) return null;
-        // a file other than the main download was picked: follow that file's newer uploads
-        const choice = await NexusFileChoice.get(parsed.domain, parsed.modId);
-        if (choice) {
-            let fileId = choice.fileId;
-            try {
-                const next = followChoice(await NexusModsApi.getFileList(parsed.domain, parsed.modId, true), choice);
-                if (next) fileId = next.fileId;
-            } catch (error) {
-                console.warn('[NexusModsApi] picked file not followed:', error instanceof Error ? error.message : error);
-            }
-            return await NexusModsApi.getModInfoByLink(NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, fileId));
+        const {domain, modId} = parsed;
+        const entryFileId = parsed.fileId;
+        const choice = entryFileId ? undefined : await NexusFileChoice.get(domain, modId);
+        const ownFileId = entryFileId ?? choice?.fileId
+            ?? fileIdOfDownload(mod.download?.cachePath, domain, modId)
+            ?? NexusModsApi.parseModLinks(mod.download?.downloadUrl || '')?.fileId;
+        const mainDownload = () => NexusModsApi.getModInfoByLink(NexusModsApi.getModUrl(domain, modId));
+        if (!ownFileId && !choice) return await mainDownload();
+        let fileId = entryFileId ?? choice?.fileId;
+        try {
+            const next = trackedFile(await NexusModsApi.getFileList(domain, modId), ownFileId, choice, !!entryFileId);
+            if (next) fileId = next.fileId;
+        } catch (error) {
+            console.warn('[NexusModsApi] file not followed:', error instanceof Error ? error.message : error);
         }
-        return await NexusModsApi.getModInfoByLink(NexusModsApi.getModUrl(parsed.domain, parsed.modId));
+        if (!fileId) return await mainDownload();
+        return await NexusModsApi.getModInfoByLink(NexusModsApi.getModFileUrl(domain, modId, fileId));
+    }
+
+    /** Read the files of these Nexus mods in as few requests as possible (before an update check) */
+    public static async prefetchFiles(mods: { url?: string }[]): Promise<void> {
+        const byDomain = new Map<string, number[]>();
+        for (const mod of mods) {
+            const parsed = NexusModsApi.parseModLinks(mod.url || '');
+            if (parsed) byDomain.set(parsed.domain, [...(byDomain.get(parsed.domain) ?? []), parsed.modId]);
+        }
+        for (const [domain, ids] of byDomain) {
+            try {
+                const gameId = await NexusModsApi.getGameIdForDomain(domain);
+                if (!gameId) continue;
+                for (const id of ids) fileCache.delete(`${gameId}:${id}`);
+                await NexusModsApi.getFilesForMods(ids.map(modId => ({gameId, modId})));
+            } catch (error) {
+                console.warn('[NexusModsApi] files not prefetched:', error instanceof Error ? error.message : error);
+            }
+        }
     }
 
     public static async downloadModFile(

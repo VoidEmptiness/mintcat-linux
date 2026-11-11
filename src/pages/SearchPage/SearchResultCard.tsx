@@ -162,7 +162,7 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
 
                         <CardRequirements plan={plan}/>
 
-                        <CardFiles item={item} listed={listed} repoDetail={repoDetail} onPick={handlePick}/>
+                        <CardFiles item={item} listed={listed} index={index} repoDetail={repoDetail} onPick={handlePick}/>
 
                         <div className="search-result-card-stats">
                             <Space size="middle">

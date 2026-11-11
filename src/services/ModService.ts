@@ -3,7 +3,8 @@ import { StorageAPI } from '@/storage';
 import type { CompleteModData } from '@/storage/dao/ModDAO';
 import type { ModcatModEntity } from '@/apis/modcat/types';
 import { MODCAT_PLATFORM } from '@/apis/modcat';
-import { NEXUSMODS_PLATFORM, type NexusModsResolvedMod } from '@/apis/nexusmods';
+import { NexusModsApi, NEXUSMODS_PLATFORM, type NexusModsResolvedMod } from '@/apis/nexusmods';
+import type { ModData } from '@/storage/dao/ModDAO';
 
 /**
  * ModService 服务层
@@ -215,26 +216,38 @@ export class ModService {
     /**
      * 从 Nexus Mods API 响应添加模组
      */
+    /**
+     * A Nexus mod's main entry (not an add-on file's entry). By the page's link, which names the
+     * game; older records are matched by mod id only when their link is for the same game.
+     */
+    static async findNexusMainEntry(domain: string, modId: number): Promise<ModData | null> {
+        const modsDAO = await StorageAPI.getMods();
+        const byUrl = await modsDAO.getModByUrl(NexusModsApi.getModUrl(domain, modId));
+        if (byUrl) return byUrl;
+        const byId = await modsDAO.getModByPlatformId(modId, NEXUSMODS_PLATFORM);
+        const page = byId ? NexusModsApi.parseModLinks(byId.url || '') : undefined;
+        return byId && page && page.domain === domain.toLowerCase() && !NexusModsApi.isFileEntryUrl(byId.url) ? byId : null;
+    }
+
+    /** `entryUrl`: add the resolved file as an entry of its own (an add-on next to the main file) */
     static async addModFromNexusmods(
         modInfo: NexusModsResolvedMod,
         profileId: number,
-        folderId: number
+        folderId: number,
+        entryUrl?: string,
     ): Promise<CompleteModData> {
         const modsDAO = await StorageAPI.getMods();
-        const dto = ModMapper.fromNexusmodsResponse(modInfo);
+        const dto = ModMapper.fromNexusmodsResponse(modInfo, entryUrl);
+        const find = () => entryUrl
+            ? modsDAO.getModByUrl(entryUrl)
+            : ModService.findNexusMainEntry(modInfo.domain, modInfo.modId);
 
-        let savedMod = await modsDAO.getModByPlatformId(dto.platformId, NEXUSMODS_PLATFORM);
-        if (!savedMod && dto.url) {
-            savedMod = await modsDAO.getModByUrl(dto.url);
-        }
+        let savedMod = await find();
         if (!savedMod) {
             try {
                 savedMod = await modsDAO.addMod(dto);
             } catch (error) {
-                savedMod = await modsDAO.getModByPlatformId(dto.platformId, NEXUSMODS_PLATFORM);
-                if (!savedMod && dto.url) {
-                    savedMod = await modsDAO.getModByUrl(dto.url);
-                }
+                savedMod = await find();
                 if (!savedMod) {
                     throw error;
                 }
