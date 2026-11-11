@@ -1,3 +1,4 @@
+import {ActivityLog} from "@/services/ActivityLog";
 import React from 'react';
 import { BasePage } from "@/pages/IBasePage.ts";
 import { Spin, Button, Typography } from "antd";
@@ -11,14 +12,14 @@ export interface EmptyPageProps {
     onRetry?: () => void;
 }
 
-const emptyPageHeight = { height: window.innerHeight - 81 };
+const emptyPageHeight = () => ({ height: window.innerHeight - 81 - ActivityLog.getPanelOffset() });
 
 function EmptyPageContent({ initError, onRetry }: EmptyPageProps) {
     const { t } = useTranslation();
 
     if (initError != null) {
         return (
-            <div id="scrollableDiv" style={{ ...emptyPageHeight, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <div id="scrollableDiv" style={{ ...emptyPageHeight(), display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
                 <Text type="danger" style={{ marginBottom: 16, textAlign: 'center' }}>
                     {initError.message || t("error.applicationInitFailed")}
                 </Text>
@@ -32,7 +33,7 @@ function EmptyPageContent({ initError, onRetry }: EmptyPageProps) {
     }
 
     return (
-        <div id="scrollableDiv" style={{ ...emptyPageHeight, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div id="scrollableDiv" style={{ ...emptyPageHeight(), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Spin size="large" description={t("Loading")} />
         </div>
     );
@@ -48,9 +49,13 @@ export class EmptyPage extends BasePage<EmptyPageProps, unknown> {
         this.hookWindowResized();
     }
 
+    componentWillUnmount(): void {
+        this.unhookWindowResized();
+    }
+
     render() {
         return (
-            <div id="scrollableDiv" style={emptyPageHeight}>
+            <div id="scrollableDiv" style={emptyPageHeight()}>
                 <EmptyPageContent initError={this.props.initError} onRetry={this.props.onRetry} />
             </div>
         );

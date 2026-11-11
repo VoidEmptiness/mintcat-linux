@@ -9,32 +9,56 @@ import { BackendRuntimeApi } from '@/apis/BackendRuntimeApi';
 
 export type NexusDownloadCapturedPayload = EventPayload<'nexus-download-captured'>;
 
-const DEFAULT_CAPTURE_TIMEOUT_MS = 120_000;
+/**
+ * Longest wait for a download from the window. The window stays open while the user logs in or
+ * picks a file, and closing it ends the wait right away, so this is only a safety net.
+ */
+const DEFAULT_CAPTURE_TIMEOUT_MS = 20 * 60_000;
+
+/** The user closed the Nexus window before a download started (nothing went wrong) */
+export class NexusDownloadWindowClosedError extends Error {
+    constructor() {
+        super(t('nexusmods.windowClosed'));
+        this.name = 'NexusDownloadWindowClosedError';
+    }
+}
 
 export interface OpenNexusDownloadWebviewOptions {
     profileUrl: string;
     domain: string;
     modId: number;
     fileId?: number;
+    /** Nexus's id of the game, when known */
+    gameId?: number;
     autoStart?: boolean;
 }
 
 export interface CaptureNexusDownloadUrlOptions {
     parsed?: NexusModsParsedUrl;
+    /** Nexus's id of the game, when known (the window then needn't search the page for it) */
+    gameId?: number;
     timeoutMs?: number;
     showMessage?: boolean;
 }
 
-export async function openNexusDownloadWebview(options: OpenNexusDownloadWebviewOptions): Promise<void> {
+/** Opens (or brings back) the Nexus window for this file; returns the window's label */
+export async function openNexusDownloadWebview(options: OpenNexusDownloadWebviewOptions): Promise<string> {
     const request = await BackendRuntimeApi.invoke<Record<string, unknown>>('open_nexus_download_webview', {
         pageUrl: buildNexusModFilesPageUrl(options.domain, options.modId, options.fileId),
         profileUrl: options.profileUrl,
         domain: options.domain,
         modId: options.modId,
         fileId: options.fileId,
+        gameId: options.gameId,
         autoStart: options.autoStart ?? true,
     });
     await ControlPlaneApi.invoke('open_managed_webview', request);
+    return String(request.label ?? '');
+}
+
+/** Same rule as the backend uses for window labels */
+function sanitizeLabel(value: string): string {
+    return value.replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
 export async function captureNexusDownloadUrl(
@@ -49,8 +73,9 @@ export async function captureNexusDownloadUrl(
     const target = await resolveNexusDownloadTarget(parsed);
 
     return new Promise((resolve, reject) => {
-        let unlisten: UnlistenFn | undefined;
+        const unlisteners: UnlistenFn[] = [];
         let completed = false;
+        let windowLabel = '';
         const timeoutId = window.setTimeout(() => {
             cleanup();
             reject(new Error(t('nexusmods.captureTimeout')));
@@ -58,40 +83,62 @@ export async function captureNexusDownloadUrl(
 
         const cleanup = () => {
             if (completed) {
-                return;
+                return false;
             }
             completed = true;
             window.clearTimeout(timeoutId);
-            if (unlisten) {
-                unlisten();
-                unlisten = undefined;
-            }
+            unlisteners.splice(0).forEach((unlisten) => unlisten());
+            return true;
         };
 
-        listenEvent('nexus-download-captured', async (payload) => {
-            if (!isMatchingNexusDownloadCapture(payload, target)) {
+        Promise.all([
+            listenEvent('nexus-download-captured', async (payload) => {
+                if (!isMatchingNexusDownloadCapture(payload, target)) {
+                    return;
+                }
+                if (cleanup()) {
+                    resolve(buildAddModUrlFromCapturedNexusDownload(payload));
+                }
+            }),
+            // The window also closes itself after a capture; that event comes second
+            listenEvent('managed-webview-closed', async (payload) => {
+                if (!windowLabel || sanitizeLabel(payload.label) !== windowLabel) {
+                    return;
+                }
+                // let a capture sent just before the close be handled first
+                window.setTimeout(() => {
+                    if (cleanup()) {
+                        reject(new NexusDownloadWindowClosedError());
+                    }
+                }, 300);
+            }),
+        ]).then(async (listeners) => {
+            unlisteners.push(...listeners);
+            if (completed) {
+                unlisteners.splice(0).forEach((unlisten) => unlisten());
                 return;
             }
-
-            cleanup();
-            resolve(buildAddModUrlFromCapturedNexusDownload(payload));
-        }).then(async (listener) => {
-            unlisten = listener;
-            await openNexusDownloadWebview({
+            windowLabel = sanitizeLabel(await openNexusDownloadWebview({
                 profileUrl: url,
                 domain: target.domain,
                 modId: target.modId,
                 fileId: target.fileId,
+                gameId: options.gameId,
                 autoStart: true,
-            });
+            }));
             if (options.showMessage ?? true) {
                 message.info(t('nexusmods.webviewAutoOpened'));
             }
         }).catch((error) => {
-            cleanup();
-            reject(error);
+            if (cleanup()) {
+                reject(error);
+            }
         });
     });
+}
+
+export function isNexusDownloadWindowClosed(error: unknown): boolean {
+    return error instanceof NexusDownloadWindowClosedError;
 }
 
 export function buildAddModUrlFromCapturedNexusDownload(payload: NexusDownloadCapturedPayload): string {

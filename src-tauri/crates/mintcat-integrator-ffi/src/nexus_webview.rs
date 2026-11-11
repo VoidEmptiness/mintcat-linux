@@ -13,6 +13,9 @@ pub struct OpenNexusDownloadWebviewRequest {
     pub mod_id: u32,
     pub file_id: Option<u32>,
     pub auto_start: Option<bool>,
+    /// Nexus's id of the game, when known (saves searching the page for it)
+    #[serde(default)]
+    pub game_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,11 +113,20 @@ fn build_auto_download_script(context: &OpenNexusDownloadWebviewRequest) -> Stri
         "domain": context.domain.as_str(),
         "modId": context.mod_id,
         "fileId": context.file_id,
+        "gameId": context.game_id,
     });
     let mut script = String::from("(function () {\nconst config = ");
     script.push_str(&config.to_string());
-    script.push_str(
-        r#";
+    script.push_str(AUTO_DOWNLOAD_SCRIPT_BODY);
+    script
+}
+
+/// Starts the download of the chosen file on the mod's Nexus page (what the Slow download /
+/// Manual download buttons do). It is kept cheap so the page stays responsive: page changes are
+/// handled at most every 300 ms, the page's HTML is searched for the game id at most every 2 s,
+/// and everything stops after 45 s, once the page is left, or as soon as the user clicks or types
+/// in the window (from then on the page is theirs; a download they start is still caught).
+const AUTO_DOWNLOAD_SCRIPT_BODY: &str = r#";
 if (!config.autoStart || window.__mintcatNexusAutoDownloadStarted) {
     return;
 }
@@ -122,13 +134,36 @@ window.__mintcatNexusAutoDownloadStarted = true;
 
 const maxRuntimeMs = 45000;
 const intervalMs = 700;
+const minGapMs = 300;
 const startedAt = Date.now();
 const attempts = new WeakMap();
 let timer = null;
 let observer = null;
+let pending = null;
+let lastRun = 0;
+let stopped = false;
 let generateDownloadUrlStarted = false;
+let gameId = Number(config.gameId) || 0;
+let lastGameIdSearch = 0;
+
+function stop() {
+    stopped = true;
+    if (timer) window.clearInterval(timer);
+    timer = null;
+    if (observer) observer.disconnect();
+    observer = null;
+    if (pending) window.clearTimeout(pending);
+    pending = null;
+}
+
+function findGameIdInText(text) {
+    const match = text.match(/["']game_?id["']\s*:\s*["']?(\d+)/i)
+        || text.match(/data-game-?id=["'](\d+)/i);
+    return match ? Number(match[1]) : 0;
+}
 
 function getGameId() {
+    if (gameId) return gameId;
     const candidates = [
         document.querySelector('[data-gameid]'),
         document.querySelector('[data-game-id]'),
@@ -145,24 +180,29 @@ function getGameId() {
             || element.getAttribute('data-game-id');
         const id = Number(value || 0);
         if (Number.isFinite(id) && id > 0) {
-            return id;
+            gameId = id;
+            return gameId;
         }
     }
-    const html = document.documentElement ? document.documentElement.innerHTML : '';
-    const match = html.match(/["']game_id["']\s*:\s*["']?(\d+)/i)
-        || html.match(/data-gameid=["'](\d+)/i)
-        || html.match(/data-game-id=["'](\d+)/i);
-    return match ? Number(match[1]) : 0;
+    // The page's HTML is large: search it now and then, not on every change
+    const now = Date.now();
+    if (now - lastGameIdSearch < 2000) return 0;
+    lastGameIdSearch = now;
+    const data = document.getElementById('__NEXT_DATA__');
+    const id = (data && findGameIdInText(data.textContent || ''))
+        || findGameIdInText(document.documentElement ? document.documentElement.innerHTML : '');
+    if (Number.isFinite(id) && id > 0) gameId = id;
+    return gameId;
 }
 
 function generateDownloadUrl() {
     if (generateDownloadUrlStarted || !config.fileId) return false;
-    const gameId = getGameId();
-    if (!gameId) return false;
+    const id = getGameId();
+    if (!id) return false;
     generateDownloadUrlStarted = true;
     const body = new URLSearchParams();
     body.set('fid', String(config.fileId));
-    body.set('game_id', String(gameId));
+    body.set('game_id', String(id));
     fetch(window.location.origin + '/Core/Libs/Common/Managers/Downloads?GenerateDownloadUrl', {
         method: 'POST',
         credentials: 'include',
@@ -175,7 +215,7 @@ function generateDownloadUrl() {
         .then((response) => response.text())
         .then((text) => {
             const data = JSON.parse(text);
-            if (data && data.url) {
+            if (data && data.url && !stopped) {
                 window.location.href = data.url;
             }
         })
@@ -219,18 +259,34 @@ function isVisible(element) {
         && element.getAttribute('aria-disabled') !== 'true';
 }
 
-function matchesFileId(element) {
-    if (!config.fileId) return true;
-    if (Date.now() - startedAt > 6000) return true;
-    const fileId = String(config.fileId);
+function attributesText(element) {
+    const parts = [];
+    for (const attr of Array.from(element.attributes || [])) {
+        if (attr.name !== 'class' && attr.name !== 'style') parts.push(attr.value);
+    }
+    return parts.join(' ').toLowerCase();
+}
+
+const fileIdPattern = config.fileId ? new RegExp('(^|\\D)' + String(config.fileId) + '(\\D|$)') : null;
+
+// The button itself or its nearby containers name the file (in a link, id or data attribute).
+// Only the button's own text is read: a container's text can be the whole page.
+function mentionsFileId(element) {
+    if (!fileIdPattern) return true;
     let current = element;
     for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
-        const text = textOf(current);
-        if (text.includes(fileId) || text.includes('file_id=' + fileId) || text.includes('/files/' + fileId)) {
-            return true;
-        }
+        if (current === document.body || current === document.documentElement) break;
+        const text = depth === 0 ? textOf(current) + ' ' + attributesText(current) : attributesText(current);
+        if (fileIdPattern.test(text)) return true;
     }
     return false;
+}
+
+// `onlyOneFile`: the page shows the buttons of one file only, so they can't be another file's
+function matchesFileId(element, onlyOneFile) {
+    if (!config.fileId) return true;
+    if (mentionsFileId(element)) return true;
+    return onlyOneFile && Date.now() - startedAt > 6000;
 }
 
 function canAttempt(element, key, cooldownMs, maxAttempts) {
@@ -243,15 +299,15 @@ function canAttempt(element, key, cooldownMs, maxAttempts) {
     return true;
 }
 
-function dispatchSlowDownload(component) {
-    if (!component || !matchesFileId(component)) return false;
+function dispatchSlowDownload(component, onlyOneFile) {
+    if (!component || !matchesFileId(component, onlyOneFile)) return false;
     if (!canAttempt(component, 'slowDownloadEvent', 900, 30)) return false;
     component.dispatchEvent(new CustomEvent('slowDownload', { bubbles: true, composed: true }));
     return true;
 }
 
-function clickElement(element) {
-    if (!element || !isVisible(element) || !matchesFileId(element)) return false;
+function clickElement(element, onlyOneFile) {
+    if (!element || !isVisible(element) || !matchesFileId(element, onlyOneFile)) return false;
     if (!canAttempt(element, 'click', 1600, 8)) return false;
     element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
     element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
@@ -286,51 +342,69 @@ function findDownloadButtons() {
 }
 
 function tick() {
+    if (stopped) return;
+    lastRun = Date.now();
+    if (lastRun - startedAt > maxRuntimeMs) {
+        stop();
+        return;
+    }
     if (!isTargetPage()) return;
     if (generateDownloadUrl()) return;
     const components = Array.from(document.querySelectorAll('mod-file-download'));
-    const matchingComponents = components.filter(matchesFileId);
+    const onlyOneComponent = components.length === 1;
+    const matchingComponents = components.filter((component) => matchesFileId(component, onlyOneComponent));
     let dispatchedComponentEvent = false;
-    for (const component of matchingComponents.length > 0 ? matchingComponents : components) {
-        if (dispatchSlowDownload(component)) {
+    for (const component of matchingComponents) {
+        if (dispatchSlowDownload(component, onlyOneComponent)) {
             dispatchedComponentEvent = true;
         }
     }
     if (dispatchedComponentEvent && Date.now() - startedAt < 3500) return;
-    for (const element of findDownloadButtons()) {
-        if (clickElement(element)) return;
+    const buttons = findDownloadButtons();
+    // Slow + manual + manager download of one file at most
+    const onlyOneFile = buttons.length <= 3;
+    for (const element of buttons) {
+        if (clickElement(element, onlyOneFile)) return;
     }
-    if (Date.now() - startedAt > maxRuntimeMs && timer) {
-        window.clearInterval(timer);
-        timer = null;
-    }
+}
+
+// Page changes come in bursts: handle them together, at most every `minGapMs`
+function scheduleTick() {
+    if (stopped || pending) return;
+    const wait = Math.max(50, minGapMs - (Date.now() - lastRun));
+    pending = window.setTimeout(() => {
+        pending = null;
+        tick();
+    }, wait);
 }
 
 function startObserver() {
-    if (!window.MutationObserver || observer || !document.documentElement) return;
-    observer = new MutationObserver(() => window.setTimeout(tick, 50));
+    if (stopped || !window.MutationObserver || observer || !document.documentElement) return;
+    observer = new MutationObserver(scheduleTick);
     observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
-timer = window.setInterval(tick, intervalMs);
+// The user took over (logging in, picking another file, reading): leave the page to them
+function onUserInput(event) {
+    if (event.isTrusted) stop();
+}
+for (const type of ['pointerdown', 'keydown']) {
+    window.addEventListener(type, onUserInput, { capture: true, passive: true });
+}
+
+timer = window.setInterval(scheduleTick, intervalMs);
 startObserver();
 if (window.customElements && window.customElements.whenDefined) {
-    window.customElements.whenDefined('mod-file-download').then(tick).catch(() => {});
+    window.customElements.whenDefined('mod-file-download').then(scheduleTick).catch(() => {});
 }
 window.addEventListener('DOMContentLoaded', () => {
     startObserver();
-    tick();
+    scheduleTick();
 }, { once: true });
-window.addEventListener('load', tick, { once: true });
-window.addEventListener('beforeunload', () => {
-    if (timer) window.clearInterval(timer);
-    if (observer) observer.disconnect();
-});
-tick();
-})();"#,
-    );
-    script
-}
+window.addEventListener('load', scheduleTick, { once: true });
+window.addEventListener('pagehide', stop, { once: true });
+scheduleTick();
+})();"#;
 
 fn capture_source(value: &str) -> Option<&'static str> {
     let url = url::Url::parse(value).ok()?;

@@ -22,6 +22,71 @@ function safeUnlisten(tauriUnlisten: UnlistenFn, eventName: string): UnlistenFn 
   };
 }
 
+
+/**
+ * One Tauri listener per event name, shared by every subscriber in this window.
+ *
+ * Each Tauri `listen`/`unlisten` is a round trip to the backend, and every emitted event
+ * is delivered to each registered listener separately. Mod list rows subscribe to
+ * several events each and are mounted/unmounted while scrolling, which meant hundreds
+ * of backend calls and deliveries. Subscribers now share a channel here; the Tauri
+ * listener stays open for the life of the window.
+ */
+type Handler = (payload: unknown) => void | Promise<void>;
+
+interface Channel {
+  handlers: Set<Handler>;
+  ready: Promise<void>;
+}
+
+const channels = new Map<string, Channel>();
+
+function dispatch(event: string, channel: Channel, payload: unknown) {
+  // Copy: handlers may unsubscribe (or subscribe) while we deliver
+  for (const handler of [...channel.handlers]) {
+    try {
+      const result = handler(payload);
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        (result as Promise<void>).catch((error) => {
+          console.error(`[EventListener] Error in callback for event "${event}":`, error);
+        });
+      }
+    } catch (error) {
+      console.error(`[EventListener] Error in callback for event "${event}":`, error);
+    }
+  }
+}
+
+async function subscribe(event: string, handler: Handler): Promise<UnlistenFn> {
+  let channel = channels.get(event);
+  if (!channel) {
+    const created: Channel = {handlers: new Set(), ready: Promise.resolve()};
+    created.ready = tauriListen(event, (tauriEvent: Event<unknown>) => dispatch(event, created, tauriEvent.payload))
+      .then(() => undefined)
+      .catch((error) => {
+        channels.delete(event);
+        console.error(`[EventListener] Failed to setup listener for event "${event}":`, error);
+        throw error;
+      });
+    channels.set(event, created);
+    channel = created;
+  }
+  channel.handlers.add(handler);
+  try {
+    await channel.ready;
+  } catch (error) {
+    channel.handlers.delete(handler);
+    throw error;
+  }
+  const subscribed = channel;
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    subscribed.handlers.delete(handler);
+  };
+}
+
 /**
  * 监听事件
  *
@@ -54,19 +119,7 @@ export async function listenEvent<E extends EventName>(
   event: E,
   callback: (payload: EventPayload<E>) => void | Promise<void>
 ): Promise<UnlistenFn> {
-  try {
-    const tauriUnlisten = await tauriListen<EventPayload<E>>(event, async (tauriEvent: Event<EventPayload<E>>) => {
-      try {
-        await callback(tauriEvent.payload);
-      } catch (error) {
-        console.error(`[EventListener] Error in callback for event "${event}":`, error);
-      }
-    });
-    return safeUnlisten(tauriUnlisten, event);
-  } catch (error) {
-    console.error(`[EventListener] Failed to setup listener for event "${event}":`, error);
-    throw error;
-  }
+  return subscribe(event, callback as Handler);
 }
 
 /**
@@ -116,22 +169,12 @@ export async function listenFiltered<E extends EventName>(
   filter: (payload: EventPayload<E>) => boolean,
   callback: (payload: EventPayload<E>) => void | Promise<void>
 ): Promise<UnlistenFn> {
-  try {
-    const tauriUnlisten = await tauriListen<EventPayload<E>>(event, async (tauriEvent: Event<EventPayload<E>>) => {
-      try {
-        // 应用过滤器
-        if (filter(tauriEvent.payload)) {
-          await callback(tauriEvent.payload);
-        }
-      } catch (error) {
-        console.error(`[EventListener] Error in filtered callback for event "${event}":`, error);
-      }
-    });
-    return safeUnlisten(tauriUnlisten, event);
-  } catch (error) {
-    console.error(`[EventListener] Failed to setup filtered listener for event "${event}":`, error);
-    throw error;
-  }
+  return subscribe(event, (payload) => {
+    // 应用过滤器
+    if (filter(payload as EventPayload<E>)) {
+      return callback(payload as EventPayload<E>);
+    }
+  });
 }
 
 /**

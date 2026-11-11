@@ -38,7 +38,11 @@ export interface EventPayloads {
   // ========================================
 
   /** 状态栏日志消息 */
-  'status-bar-log': string | { message: string; level?: 'info' | 'success' | 'warning' | 'error' };
+  /** transient: shown in the status bar only, not added to the Log (progress steps) */
+  'status-bar-log': string | { message: string; level?: 'info' | 'success' | 'warning' | 'error'; transient?: boolean };
+
+  /** Entry for the bottom Log panel (from any window) */
+  'activity-log': { level: 'info' | 'success' | 'warning' | 'error'; message: string; detail?: string; source?: string };
 
   /** 状态栏进度百分比 (0-100) */
   'status-bar-percent': number;
@@ -50,6 +54,9 @@ export interface EventPayloads {
   /** 配置管理对话框打开 */
   'config-manage-dialog-open': void;
 
+  /** Open "Import from mint" (optionally with a mod_data.json already picked or dropped) */
+  'mint-import-open': { path?: string; text?: string };
+
   /** 标题栏头像加载 */
   'title-bar-load-avatar': void;
 
@@ -58,6 +65,10 @@ export interface EventPayloads {
     text: string;
     groupId: number;
     addModType: string;
+    /** Local mod paths to add to the Local tab (merged with what's already there) */
+    paths?: string[];
+    /** Changes on every open so repeated identical content still updates the dialog */
+    revision?: number;
   };
 
   /** 添加模组对话框确认 */
@@ -66,6 +77,15 @@ export interface EventPayloads {
     groupId: number;
     list: string[];
     modInfoList?: any[];
+    /** Both tabs' contents, so links and files gathered together are all added */
+    onlineList?: string[];
+    localList?: string[];
+    /** Mods going to another folder than groupId: file path / link / mod.io mod id → folder id */
+    localFolders?: Record<string, number>;
+    onlineFolders?: Record<string, number>;
+    subscribedFolders?: Record<string, number>;
+    /** Folders made in the window (negative ids in groupId/the maps); created before adding */
+    newFolders?: { id: number; name: string; parentId: number }[];
   };
 
   /** 添加模组对话框关闭 */
@@ -141,6 +161,11 @@ export interface EventPayloads {
     profileUrl: string;
   };
 
+  /** A window opened with open_managed_webview is gone (closed by the user or after a capture) */
+  'managed-webview-closed': {
+    label: string;
+  };
+
   // ========================================
   // Mod 更新事件
   // ========================================
@@ -212,7 +237,7 @@ export interface EventPayloads {
   'install-success': number;
 
   /** 安装错误（字符串或 backend key 对象 { key, name }） */
-  'install-error': string | { key: string; name?: string };
+  'install-error': string | { key: string; name?: string; reason?: string };
 
   // ========================================
   // 任务队列事件

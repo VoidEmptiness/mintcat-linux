@@ -88,6 +88,57 @@ pub async fn fetch_update_manifest(
     }
 }
 
+const REPOSITORY_TIMEOUT_SECS: u64 = 30;
+const REPOSITORY_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// GET a JSON document from a user-added mod repository (e.g. a Pak Hub site).
+/// Done in the backend because those sites don't send CORS headers for the webview.
+#[tauri::command]
+pub async fn fetch_repository_json(
+    app: AppHandle,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let url = url.trim();
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("repository url must be http(s)".to_string());
+    }
+
+    let manual_proxy = app
+        .try_state::<NetworkProxyState>()
+        .and_then(|state| state.get());
+    let proxy_url = resolve_proxy(manual_proxy);
+    let builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(REPOSITORY_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(UPDATE_MANIFEST_CONNECT_TIMEOUT_SECS));
+    let client = apply_proxy_builder(builder, proxy_url.as_deref())
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+    if bytes.len() > REPOSITORY_MAX_BYTES {
+        return Err("repository response too large".to_string());
+    }
+    let data: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| format!("repository did not return JSON (HTTP {})", status.as_u16()))?;
+    if !status.is_success() {
+        let detail = data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+        return Err(detail);
+    }
+    Ok(data)
+}
+
 /// 解析出实际使用的代理 URL：优先使用手动设置的代理，否则尝试系统代理（Windows IE/系统代理或环境变量）。
 pub fn resolve_proxy(manual: Option<String>) -> Option<String> {
     let manual = manual.filter(|s| !s.is_empty());

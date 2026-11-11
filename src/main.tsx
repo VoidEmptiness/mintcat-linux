@@ -14,11 +14,13 @@ import {getDefaultTheme, renderTheme} from "@/themes/default.ts";
 import i18n from "@/locales/i18n"
 import packageJson from '../package.json';
 import {InitLog} from "./apis/LogApi.ts";
+import {initPerfTrace} from "@/utils/perfTrace";
 import {initializeTaskSystem} from "@/tasks";
 import {registerIoC} from "@/core/IoCRegistration.ts";
 import {confirmFrontendUpdateIfHot} from "@/utils/FrontendUpdateRuntime.ts";
 
 InitLog();
+initPerfTrace();
 registerIoC();
 const isMainWindow = getCurrentWindow().label === 'main';
 

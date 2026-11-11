@@ -5,6 +5,7 @@ import { ModUpdateService } from '@/services/ModUpdateService';
 import { IntegrateApi } from '@/apis/IntegrateApi';
 import type { CompleteModData } from '@/storage/dao/ModDAO';
 import { StorageAPI } from '@/storage';
+import {loadCompleteMods} from '@/services/ModBatchLoad';
 import { MessageBox } from '@/components/MessageBox';
 import { ForeignPaksConfirmContent } from '@/components/ForeignPaksConfirmContent';
 import React from 'react';
@@ -13,9 +14,21 @@ import { exists, stat } from '@tauri-apps/plugin-fs';
 import { ModSourceType } from '@/models/mod/types';
 import { MODCAT_PLATFORM } from '@/apis/modcat';
 import { ensureInternalAssets } from '@/services/InternalAssetService';
-import { md5 } from '@/utils/CryptApi';
+import { computeInstallManifestHash } from './InstallManifestHash';
 import { isUe4ssEnabled } from '@/utils/Ue4ssSetting';
 import { BackendRuntimeApi } from '@/apis/BackendRuntimeApi';
+import { flattenTreeModIds, sortByDisplayOrder } from '@/utils/ModDisplayOrder';
+import { logActivity } from '@/services/ActivityLog';
+import { DeployLog, diffDeployed, shortList } from '@/services/DeployLog';
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** The Log's list of names: the first few, then how many more */
+function names(list: string[]): string {
+    return shortList(list, 12, n => t("log.andMore", {count: n}));
+}
 
 /**
  * Check if a path is a valid unpacked mod directory
@@ -32,59 +45,7 @@ async function isValidUnpackedMod(dirPath: string): Promise<boolean> {
     }
 }
 
-/**
- * Compute a deterministic hash from the full set of install inputs.
- * Any change in the mod list, cache files, UE4SS mode, or asset zips
- * produces a different hash, automatically triggering reinstallation.
- */
-async function fileSizeAndMtime(filePath: string): Promise<{ size: number; mtime: number }> {
-    try {
-        if (filePath && await exists(filePath)) {
-            const info = await stat(filePath);
-            return {
-                size: info.size ?? 0,
-                mtime: info.mtime?.getTime() ?? 0,
-            };
-        }
-    } catch { /* file missing or inaccessible */ }
-    return { size: 0, mtime: 0 };
-}
-
-export async function computeInstallManifestHash(
-    enabledMods: CompleteModData[],
-    ue4ssEnabled: boolean,
-    compressModPak: boolean = false,
-    assetPaths?: { ue4ssZipPath?: string; drgZipPath?: string; rcZipPath?: string } | null
-): Promise<string> {
-    const modEntries = [];
-    for (const mod of enabledMods) {
-        const cachePath = mod.download?.cachePath || "";
-        const { size, mtime } = await fileSizeAndMtime(cachePath);
-        modEntries.push({
-            modId: mod.modId,
-            nameId: mod.nameId || "",
-            cachePath,
-            fileSize: size,
-            mtime,
-            isUnpacked: cachePath ? await isValidUnpackedMod(cachePath) : false,
-        });
-    }
-
-    const ue4ssZipPath = ue4ssEnabled ? assetPaths?.ue4ssZipPath || "" : "";
-    const ue4ssStat = await fileSizeAndMtime(ue4ssZipPath);
-    const drgStat   = await fileSizeAndMtime(assetPaths?.drgZipPath || "");
-    const rcStat    = await fileSizeAndMtime(assetPaths?.rcZipPath || "");
-
-    const manifest = {
-        mods: modEntries,
-        ue4ssMode: ue4ssEnabled ? "Enabled" : "Disabled",
-        ...(compressModPak ? { compressModPak } : {}),
-        ue4ssZip: { path: ue4ssZipPath, ...ue4ssStat },
-        drgZip:   { path: assetPaths?.drgZipPath || "",   ...drgStat },
-        rcZip:    { path: assetPaths?.rcZipPath || "",     ...rcStat },
-    };
-    return md5(JSON.stringify(manifest));
-}
+export { computeInstallManifestHash };
 
 /**
  * Task: Install mods to game
@@ -111,7 +72,21 @@ export async function computeInstallManifestHash(
 export class ModInstallTask implements ITask {
 
     async run(context: ITaskContext): Promise<void> {
+        // Every deploy, and why one didn't happen, goes to the Log
+        try {
+            await this.install(context);
+        } catch (error) {
+            const reason = errorText(error);
+            const cancelled = reason === t('User Cancels Installation') || reason === 'Task cancelled';
+            await logActivity(cancelled ? 'warning' : 'error',
+                cancelled ? t("deploy.log.cancelled") : t("deploy.log.failed", {reason}), undefined, 'deploy');
+            throw error;
+        }
+    }
+
+    private async install(context: ITaskContext): Promise<void> {
         const TOTAL_STEPS = 9;
+        const startedAt = Date.now();
         await context.setMessage(t("Start installation"));
 
         // Get profile view model and settings
@@ -137,6 +112,7 @@ export class ModInstallTask implements ITask {
         if (drgPakPath) {
             const { hasForeign, fileNames } = await IntegrateApi.checkForeignPaksInPaksDir(drgPakPath);
             if (hasForeign) {
+                await logActivity('warning', t("deploy.log.foreignPaks", {count: fileNames.length}), names(fileNames), 'deploy');
                 const confirm = await MessageBox.confirm({
                     title: t('install.foreignPaksTitle'),
                     content: React.createElement(ForeignPaksConfirmContent, {
@@ -149,6 +125,7 @@ export class ModInstallTask implements ITask {
                 if (!confirm) {
                     throw new Error(t('User Cancels Installation'));
                 }
+                await logActivity('info', t("deploy.log.foreignPaksKept"), undefined, 'deploy');
             }
         }
 
@@ -160,23 +137,29 @@ export class ModInstallTask implements ITask {
         const activeProfileData = await profileVM.getActiveProfileData();
 
         // Get profile mods (with enabled status)
+        // Install in the order the list shows (top of the list wins file conflicts).
+        // getProfileMods sorts by per-folder sortOrder, which interleaves folders.
         const profileMods = await profilesDAO.getProfileMods(activeProfileData.id!);
-        const enabledProfileMods = profileMods.filter(pm => pm.isEnabled);
+        const displayOrder = flattenTreeModIds(await profileVM.getActiveProfileTreeRoot());
+        const enabledProfileMods = sortByDisplayOrder(
+            profileMods.filter(pm => pm.isEnabled),
+            displayOrder,
+            pm => pm.modId
+        );
         const isEmptyProfile = enabledProfileMods.length === 0;
 
         if (!isEmptyProfile) {
            await context.setMessage(`${t('Found')} ${enabledProfileMods.length} ${t('enabled mods')}`);
         }
+        await logActivity('info', t("deploy.log.started", {
+            count: enabledProfileMods.length,
+            disabled: profileMods.length - enabledProfileMods.length,
+            profile: activeProfileData.displayName || activeProfileData.name,
+            game: activeGame?.displayName ?? activeGame?.name ?? "",
+        }), drgPakPath, 'deploy');
 
-        // Get complete mod data for enabled mods
-        const modsDAO = await StorageAPI.getMods();
-        const enabledMods: CompleteModData[] = [];
-        for (const pm of enabledProfileMods) {
-            const modData = await modsDAO.getCompleteModData(pm.modId);
-            if (modData) {
-                enabledMods.push(modData);
-            }
-        }
+        // Get complete mod data for enabled mods (batched, in install order)
+        const enabledMods: CompleteModData[] = await loadCompleteMods(enabledProfileMods.map(pm => pm.modId));
 
         // Step 3: Check and update mods (parallel download)
         await context.setStep(t('Check Mod Updates'), 3, TOTAL_STEPS);
@@ -186,14 +169,11 @@ export class ModInstallTask implements ITask {
         if (onlineEnabledMods.length > 0) {
             await ModUpdateService.refreshOnlineMetadata(onlineEnabledMods, 3, { showStatus: false });
 
+            const refreshed = new Map((await loadCompleteMods(onlineEnabledMods.map(m => m.modId!))).map(m => [m.modId, m]));
             for (let i = 0; i < enabledMods.length; i++) {
-                if (!ModUpdateService.isOnlineMod(enabledMods[i])) {
-                    continue;
-                }
-
-                const refreshed = await modsDAO.getCompleteModData(enabledMods[i].modId!);
-                if (refreshed) {
-                    enabledMods[i] = refreshed;
+                const updated = refreshed.get(enabledMods[i].modId);
+                if (updated) {
+                    enabledMods[i] = updated;
                 }
             }
         }
@@ -235,6 +215,8 @@ export class ModInstallTask implements ITask {
         // Parallel download all mods that need updating
         if (modsNeedingDownload.length > 0) {
             await context.setMessage(`${t('download.modsParallel')} (${modsNeedingDownload.length} ${t('mods')})`);
+            await logActivity('info', t("deploy.log.downloading", {count: modsNeedingDownload.length}),
+                names(modsNeedingDownload.map(m => m.displayName)), 'deploy');
 
             const { errors } = await ModUpdateService.batchDownloadModFiles(modsNeedingDownload, 3);
 
@@ -245,21 +227,21 @@ export class ModInstallTask implements ITask {
                 throw new Error(`${t("Download Failed")}: ${failedNames}${reasonSuffix}`);
             }
 
-            // Refresh enabledMods from DB so subsequent steps use updated cache paths
-            for (let i = 0; i < enabledMods.length; i++) {
-                const modsDAO = await StorageAPI.getMods();
-                const updated = await modsDAO.getCompleteModData(enabledMods[i].modId!);
-                if (updated) {
-                    enabledMods[i] = updated;
-                }
+        }
+
+        // Refresh enabledMods from the database so the next steps use the current cache paths
+        // (downloads and the local-file check above update them)
+        const current = new Map((await loadCompleteMods(enabledMods.map(m => m.modId!))).map(m => [m.modId, m]));
+        for (let i = 0; i < enabledMods.length; i++) {
+            const updated = current.get(enabledMods[i].modId);
+            if (updated) {
+                enabledMods[i] = updated;
             }
         }
 
         // Verify all mods have cache paths after download
         for (const item of enabledMods) {
-            const modsDAO = await StorageAPI.getMods();
-            const updatedMod = await modsDAO.getCompleteModData(item.modId!);
-            const cachePath = updatedMod?.download?.cachePath || "";
+            const cachePath = current.get(item.modId)?.download?.cachePath || "";
             if (cachePath === "") {
                 throw new Error(`${t("File Not Found")}: ${item.url}`);
             }
@@ -300,6 +282,7 @@ export class ModInstallTask implements ITask {
 
         if (installType === "old_version_mint_installed") {
             await context.setMessage(t('migrate.detectedOldInstallation'), 'warning');
+            await logActivity('warning', t('migrate.detectedOldInstallation'), drgPakPath, 'deploy');
             const result = await MessageBox.confirm({
                 title: t("Installation Warning"),
                 content: t("migrate.confirmUninstallOldMint"),
@@ -350,6 +333,7 @@ export class ModInstallTask implements ITask {
         ) {
             await context.setMessage(t("Mod Already Install"));
             await context.updateProgress(100);
+            await logActivity('info', t("deploy.log.upToDate", {count: enabledMods.length}), undefined, 'deploy');
             return;
         }
 
@@ -357,6 +341,9 @@ export class ModInstallTask implements ITask {
         await context.setStep(t('Uninstall old version'), 8, TOTAL_STEPS);
         await context.setMessage(t('Uninstalling old mods...'));
         await IntegrateApi.uninstall(drgPakPath, true);
+        if (installType === "mintcat_installed" || installType === "old_version_mint_installed") {
+            await logActivity('info', t("deploy.log.removedPrevious"), drgPakPath, 'deploy');
+        }
 
         // Step 9: Install mods
         await context.setStep(t('Install mods'), 9, TOTAL_STEPS);
@@ -400,6 +387,41 @@ export class ModInstallTask implements ITask {
         // Persist manifest hash so the next install can detect "nothing changed"
         await profileVM.setActiveProfileInstallHash(currentHash);
         await profileVM.setActiveGameInstalledHash(currentHash);
+
+        // What the game has now, compared with the last deploy
+        const gameName = activeGame?.name ?? 'drg';
+        const deployed = enabledMods.map(m => ({id: m.modId!, name: m.displayName}));
+        const before = await DeployLog.last(gameName);
+        const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        const unpacked = installModList.filter(m => m.is_unpacked).length;
+        const audio = installModList.filter(m => m.is_audio_only).length;
+        await logActivity('success', t("deploy.log.done", {count: deployed.length, seconds}), [
+            ue4ssEnabled ? t("deploy.log.withUe4ss") : "",
+            unpacked ? t("deploy.log.unpacked", {count: unpacked}) : "",
+            audio ? t("deploy.log.audio", {count: audio}) : "",
+            compressModPak ? t("deploy.log.compressed") : "",
+        ].filter(Boolean).join(" · ") || undefined, 'deploy');
+        if (before && before.mods.length > 0) {
+            const diff = diffDeployed(before.mods, deployed);
+            if (diff.added.length) await logActivity('info', t("deploy.log.added", {count: diff.added.length}), names(diff.added), 'deploy');
+            if (diff.removed.length) await logActivity('info', t("deploy.log.removed", {count: diff.removed.length}), names(diff.removed), 'deploy');
+            if (diff.reordered) await logActivity('info', t("deploy.log.reordered"), undefined, 'deploy');
+            if (!diff.added.length && !diff.removed.length && !diff.reordered) {
+                await logActivity('info', t("deploy.log.sameMods"), undefined, 'deploy');
+            }
+        }
+        // the whole install order, for the log file only (long)
+        console.info(`[deploy] install order (${deployed.length}): ${deployed.map((m, i) => `${i + 1}. ${m.name}`).join("; ")}`);
+        try {
+            await DeployLog.record(gameName, {
+                time: Date.now(),
+                profile: activeProfileData.displayName || activeProfileData.name,
+                profileId: activeProfileData.id,
+                mods: deployed,
+            });
+        } catch (e) {
+            console.warn('[deploy] could not record the deploy', e);
+        }
 
         // Complete
         await context.setMessage(t("Installation Finish"));

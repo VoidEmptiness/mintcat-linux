@@ -12,6 +12,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 
 import { CloudBackupApi, type CloudBackupRecord } from "@/apis/mintcat";
 import { MessageBox } from "@/components/MessageBox";
+import { defaultSaveLocation } from "@/utils/SaveLocation";
+import {confirmDelete} from "@/services/DeleteConfirm";
 
 const { Text } = Typography;
 
@@ -99,7 +101,7 @@ export function CloudBackupSettings() {
 
     const onDownload = async (item: CloudBackupRecord) => {
         const target = await save({
-            defaultPath: buildDefaultFileName(item.createdAt),
+            defaultPath: await defaultSaveLocation(buildDefaultFileName(item.createdAt)),
             filters: [
                 { name: "SQLite", extensions: ["sqlite"] },
             ],
@@ -140,7 +142,7 @@ export function CloudBackupSettings() {
     };
 
     const onDelete = async (item: CloudBackupRecord) => {
-        const confirmed = await MessageBox.confirm({
+        const confirmed = await confirmDelete({
             title: t("Delete"),
             content: t("Delete Backup Confirm"),
         });
@@ -161,7 +163,10 @@ export function CloudBackupSettings() {
     };
 
     return (
-        <Card title={t("Cloud Backup")} style={{ marginBottom: "10px" }}>
+        <Card title={t("cloudBackup.legacyTitle")} style={{ marginBottom: "10px" }}>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                {t("cloudBackup.help")}
+            </Typography.Paragraph>
             <Space.Compact style={{ width: "100%", marginBottom: 16 }}>
                 <Input
                     value={note}

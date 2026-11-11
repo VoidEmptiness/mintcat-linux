@@ -1,0 +1,21 @@
+# Copy of repak's oodle_loader (https://github.com/trumank/repak, rev 355b5f6, MIT OR Apache-2.0),
+# used through [patch] in ../../Cargo.toml. The only change: where the Oodle library is looked
+# for and saved (next to the program only worked when that folder is writable, which an
+# AppImage's isn't). See README.md.
+[package]
+name = "oodle_loader"
+version = "0.2.3"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["spuds", "trumank"]
+repository = "https://github.com/trumank/repak"
+
+[dependencies]
+libloading = "0.9"
+ureq = "3.1"
+hex = "0.4"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+
+[dev-dependencies]
+tempfile = "3"

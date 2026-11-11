@@ -1,3 +1,5 @@
+import {logActivity, nameList} from "@/services/ActivityLog";
+import {decodeHtmlEntities} from "@/utils/HtmlEntities";
 import { t } from "i18next";
 import { exists, stat, remove } from "@tauri-apps/plugin-fs";
 import { emitEvent } from "@/events";
@@ -15,6 +17,7 @@ import type { CompleteModData } from "@/storage/dao/ModDAO";
 import type { ModInfo } from "@/apis/modio/ModInfo";
 import { taskQueueAPI, TaskPriority } from "tauri-plugin-task-queue";
 import { asyncPoolAll } from "@/utils/AsyncPool";
+import { activeProfileModIds } from "@/services/LocalModRelocation";
 
 /**
  * ModUpdateService 服务层
@@ -25,6 +28,9 @@ import { asyncPoolAll } from "@/utils/AsyncPool";
  * - 检查本地模组缓存
  * - 检查本地模组修改
  */
+/** Local mods whose missing file was already logged this session */
+const reportedMissingModIds = new Set<number>();
+
 export class ModUpdateService {
 
     private static loading = false;
@@ -131,10 +137,13 @@ export class ModUpdateService {
             ? new Map(unresolvedInfoList.map(m => [m.name_id, m]))
             : null;
 
+        let step = 0;
         for (const mod of modioMods) {
+            step++;
             try {
                 if (showStatus) {
-                    await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                    // status bar only: one Log line per mod buried the Log (300 lines per check)
+                    await StatusBar.progress(t("Batch updating mod info step", { name: mod.displayName, step, total: modioMods.length }));
                 }
 
                 const modInfoByPlatformId = mod.platformId > 0 ? modInfoMap?.get(mod.platformId) : undefined;
@@ -242,12 +251,12 @@ export class ModUpdateService {
             modsToDownload.push(...refreshedMods);
         }
         for (const mod of modcatMods) {
-            await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+            await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
             const refreshed = await this.updateModMetadataOnly(mod);
             modsToDownload.push(refreshed ?? mod);
         }
         for (const mod of nexusMods) {
-            await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+            await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
             const refreshed = await this.updateModMetadataOnly(mod);
             modsToDownload.push(refreshed ?? mod);
         }
@@ -264,6 +273,17 @@ export class ModUpdateService {
         );
 
         const successCount = mods.length - errors.length;
+        // Each download in the Log: which ones came in, and why any didn't
+        const failedIds = new Set(errors.map(e => e.item.modId));
+        const done = modsToDownload.filter(m => !failedIds.has(m.modId));
+        if (done.length) {
+            await logActivity('success', t("log.download.done", {count: done.length}),
+                nameList(done.map(m => `${m.displayName}${m.version?.currentVersion ? ` (${m.version.currentVersion})` : ""}`)), 'download');
+        }
+        for (const e of errors) {
+            await logActivity('error', t("log.download.failed", {name: e.item.displayName,
+                reason: e.error instanceof Error ? e.error.message : String(e.error)}), e.item.url || undefined, 'download');
+        }
 
         if (errors.length > 0) {
             await StatusBar.error(
@@ -316,8 +336,8 @@ export class ModUpdateService {
         const modData = await modsApi.getModById(modId);
         if (!modData) return;
 
-        // 获取远程名称
-        const remoteName = modInfo.name || "";
+        // 获取远程名称 (mod.io sends it HTML-escaped)
+        const remoteName = decodeHtmlEntities(modInfo.name || "");
 
         const platformId = modInfo.id || modData.platformId || 0;
         // 优先使用 API 返回的原始标签；若 API 未返回则尝试单独拉取
@@ -458,7 +478,7 @@ export class ModUpdateService {
                 modcatMods,
                 async (mod) => {
                     if (showStatus) {
-                        await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                        await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
                     }
                     await this.updateModMetadataOnly(mod);
                     return mod;
@@ -473,7 +493,7 @@ export class ModUpdateService {
                 nexusMods,
                 async (mod) => {
                     if (showStatus) {
-                        await StatusBar.info(t("Batch updating mod info", { name: mod.displayName }));
+                        await StatusBar.progress(t("Batch updating mod info", { name: mod.displayName }));
                     }
                     await this.updateModMetadataOnly(mod);
                     return mod;
@@ -551,7 +571,11 @@ export class ModUpdateService {
             return;
         }
 
-        const dto = ModMapper.fromNexusmodsResponse(resolved);
+        // an add-on file's own entry keeps being that entry, on its file's newest upload
+        const entryUrl = NexusModsApi.isFileEntryUrl(mod.url) && resolved.file
+            ? NexusModsApi.getModFileUrl(resolved.domain, resolved.modId, NexusModsApi.getFileId(resolved.file))
+            : undefined;
+        const dto = ModMapper.fromNexusmodsResponse(resolved, entryUrl);
         await modsApi.updateMod(mod.modId!, {
             platformId: dto.platformId,
             nameId: dto.nameId,
@@ -559,7 +583,8 @@ export class ModUpdateService {
             originalName: dto.originalName || mod.originalName,
             url: dto.url,
             sourceType: dto.sourceType,
-            tags: dto.tags,
+            // the category when Nexus gave it (a failed lookup keeps the one saved)
+            ...(dto.tags?.length ? {tags: dto.tags} : {}),
             approvalStatus: dto.approvalStatus,
         });
 
@@ -575,7 +600,11 @@ export class ModUpdateService {
                 && !!dto.download.fileSize
                 && existingDownload.fileSize !== dto.download.fileSize;
             const keepCachedFile = !versionChanged && !fileSizeChanged && !!existingDownload?.cachePath;
-            const downloadUrl = NexusModsApi.hasReusableDownloadCredential(existingDownload?.downloadUrl)
+            // a download link from before is for that file: not reused once a newer upload is out
+            const oldFileId = NexusModsApi.parseModLinks(existingDownload?.downloadUrl || '')?.fileId;
+            const newFileId = NexusModsApi.parseModLinks(dto.download.downloadUrl || '')?.fileId;
+            const sameFile = !versionChanged && !fileSizeChanged && (!oldFileId || !newFileId || oldFileId === newFileId);
+            const downloadUrl = sameFile && NexusModsApi.hasReusableDownloadCredential(existingDownload?.downloadUrl)
                 ? existingDownload?.downloadUrl
                 : dto.download.downloadUrl;
 
@@ -648,12 +677,18 @@ export class ModUpdateService {
         }
 
         // Update download information in database (cachePath, progress, status)
+        const previousPath = (await modsApi.getModDownload(mod.modId!))?.cachePath;
         await modsApi.upsertModDownload({
             modId: mod.modId!,
             cachePath: cachePath,
             downloadProgress: 100,
             downloadStatus: "completed"
         });
+        // the old version's file goes when "Old versions after an update: delete" is chosen
+        if (cachePath) {
+            const {Downloads} = await import("@/services/Downloads");
+            await Downloads.afterUpdate(mod.modId!, previousPath, cachePath);
+        }
 
         // Update fileVersion to match the downloaded version
         if (mod.version?.currentVersion) {
@@ -811,12 +846,13 @@ export class ModUpdateService {
     public static async checkLocalModCache(modItem: CompleteModData) {
         if (modItem.sourceType === ModSourceType.Local) {
             const cachePath = modItem.download?.cachePath || "";
-            const modsApi = await StorageAPI.getMods();
-
-            if (!await exists(cachePath)) {
+            const missing = !await exists(cachePath);
+            // Only when that changed: saving and redrawing every mod on each deploy is slow
+            if (modItem.status?.isLocalNotFound !== missing) {
+                const modsApi = await StorageAPI.getMods();
                 await modsApi.upsertModStatus({
                     modId: modItem.modId!,
-                    isLocalNotFound: true
+                    isLocalNotFound: missing
                 });
                 // Get updated mod data and emit event
                 const updatedMod = await modsApi.getCompleteModData(modItem.modId!);
@@ -826,22 +862,8 @@ export class ModUpdateService {
                         data: updatedMod
                     });
                 }
-                return false;
-            } else {
-                await modsApi.upsertModStatus({
-                    modId: modItem.modId!,
-                    isLocalNotFound: false
-                });
             }
-
-            // Get updated mod data and emit event
-            const updatedMod = await modsApi.getCompleteModData(modItem.modId!);
-            if (updatedMod) {
-                await emitEvent("mod-treeview-update", {
-                    modId: updatedMod.modId!,
-                    data: updatedMod
-                });
-            }
+            return !missing;
         }
         return true;
     }
@@ -850,23 +872,42 @@ export class ModUpdateService {
      * 批量检查本地模组缓存（优化版本）
      * 只检查本地类型的模组，减少不必要的操作
      */
-    public static async batchCheckLocalModCache(allMods: CompleteModData[]): Promise<void> {
+    /** @returns how many local mods changed between found and missing */
+    public static async batchCheckLocalModCache(allMods: CompleteModData[]): Promise<number> {
         const localMods = allMods.filter(m => m.sourceType === ModSourceType.Local);
-        if (localMods.length === 0) return;
+        if (localMods.length === 0) return 0;
+        let changed = 0;
+        const missingFound: CompleteModData[] = [];
+        const backAgain: CompleteModData[] = [];
 
         const modsApi = await StorageAPI.getMods();
         const updatePromises: Promise<void>[] = [];
+        // Only report mods that are in the list being shown: records of mods deleted from the
+        // list (or only in other profiles) stay in the database and are checked here too.
+        const inList = await activeProfileModIds();
 
         for (const modItem of localMods) {
             const cachePath = modItem.download?.cachePath || "";
+            const shown = !inList || inList.has(modItem.modId!);
             
             // 使用并行检查文件是否存在
             updatePromises.push((async () => {
                 const fileExists = await exists(cachePath);
                 const currentNotFound = modItem.status?.isLocalNotFound ?? false;
+                // Log each missing file once per session, and when it comes back
+                if (!shown) {
+                    // not in the current list: keep its status up to date, but don't report it
+                } else if (!fileExists && !reportedMissingModIds.has(modItem.modId!)) {
+                    reportedMissingModIds.add(modItem.modId!);
+                    missingFound.push(modItem);
+                } else if (fileExists && reportedMissingModIds.has(modItem.modId!)) {
+                    reportedMissingModIds.delete(modItem.modId!);
+                    backAgain.push(modItem);
+                }
                 
                 // 只有状态变化时才更新数据库和发送事件
                 if (fileExists === currentNotFound) {
+                    changed++;
                     await modsApi.upsertModStatus({
                         modId: modItem.modId!,
                         isLocalNotFound: !fileExists
@@ -891,6 +932,24 @@ export class ModUpdateService {
 
         // 并行执行所有检查
         await Promise.all(updatePromises);
+
+        for (const mod of missingFound) {
+            await logActivity('warning', t("mod.log.fileMissing", {name: mod.displayName || mod.originalName || ''}),
+                mod.download?.cachePath || mod.url, 'files');
+        }
+        for (const mod of backAgain) {
+            await logActivity('info', t("mod.log.fileBack", {name: mod.displayName || mod.originalName || ''}),
+                mod.download?.cachePath || mod.url, 'files');
+        }
+        return changed;
+    }
+
+    /**
+     * Re-check local mod files (e.g. when the window regains focus after files were moved)
+     */
+    public static async recheckLocalModFiles(): Promise<number> {
+        const modsApi = await StorageAPI.getMods();
+        return await this.batchCheckLocalModCache(await modsApi.getAllCompleteModData());
     }
 
     /**
@@ -942,11 +1001,12 @@ export class ModUpdateService {
         const allCompleteMods = await modsApi.getAllCompleteModData();
 
         // 使用批量检查方法
-        await this.batchCheckLocalModCache(allCompleteMods);
+        const changed = await this.batchCheckLocalModCache(allCompleteMods);
 
         ModUpdateService.loading = false;
         onLoadingChange?.(false);
-        return true;
+        /** how many local mods changed between found and missing */
+        return changed;
     }
 
     /**

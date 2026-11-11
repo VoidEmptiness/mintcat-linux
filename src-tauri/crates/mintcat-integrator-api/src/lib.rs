@@ -136,6 +136,145 @@ pub struct PathRequest {
 pub struct CheckModConflictsRequest {
     pub mod_list_json: String,
     pub game_name: Option<String>,
+    /// The game's own pak, to tell files that replace game files from files mods add
+    #[serde(default)]
+    pub game_pak_path: Option<String>,
+}
+
+/// Compare one shared asset across mods (and the game's original) part by part
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictAssetDiffRequest {
+    pub game_name: Option<String>,
+    #[serde(default)]
+    pub game_pak_path: Option<String>,
+    /// Normalized path without extension, e.g. "fsd/content/weaponsntools/revolver/wpn_revolver"
+    pub asset_path: String,
+    pub mods: Vec<ConflictCheckModInfo>,
+}
+
+/// One version's value of a part (property, function, ...); same `hash` = same content
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetPartValue {
+    pub hash: String,
+    /// Short readable value for simple properties (numbers, names, booleans...)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// A part that isn't the same in every version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetDiffRow {
+    pub key: String,
+    /// property, component, function, event, variable, class, row, export, data
+    pub kind: String,
+    /// The object the part belongs to (class defaults, a component, the class itself...)
+    pub owner: String,
+    pub name: String,
+    /// The game's version; None = the game doesn't have this part (or the original wasn't read)
+    #[serde(default)]
+    pub game: Option<AssetPartValue>,
+    /// mod id -> that mod's version; missing/None = the mod doesn't have it
+    #[serde(default)]
+    pub mods: std::collections::HashMap<i64, Option<AssetPartValue>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetVersionInfo {
+    /// The file was found (in the mod / in the game)
+    pub found: bool,
+    /// Couldn't be read part by part (then only whole-file comparison is possible)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Number of parts read
+    pub parts: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_hash: Option<String>,
+    /// Compared object by object only (no property detail)
+    #[serde(default)]
+    pub shallow: bool,
+}
+
+/// Summarize, for many shared assets at once, what each mod changes compared to the game
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictAssetsSummaryRequest {
+    pub game_name: Option<String>,
+    #[serde(default)]
+    pub game_pak_path: Option<String>,
+    pub mods: Vec<ConflictCheckModInfo>,
+    pub assets: Vec<SharedAssetRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedAssetRef {
+    /// Normalized path without extension
+    pub asset_path: String,
+    pub mod_ids: Vec<i64>,
+}
+
+/// What one mod changes in one asset
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModAssetChanges {
+    pub found: bool,
+    /// Couldn't be read part by part
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Parts that differ from the game (or, when the game has no such file, all parts)
+    pub changed: usize,
+    /// changed parts per kind (property, component, function, event, variable, export, ...)
+    pub kinds: std::collections::BTreeMap<String, usize>,
+    /// Names of a few changed parts, for a quick description
+    pub examples: Vec<String>,
+    /// Compared object by object only (no property detail)
+    #[serde(default)]
+    pub shallow: bool,
+}
+
+/// How two mods' versions of one asset relate
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetPairChanges {
+    pub a: i64,
+    pub b: i64,
+    /// Parts both change in the same way
+    pub same: usize,
+    /// Parts both change, differently (a real clash)
+    pub clash: usize,
+    /// Parts only a changes / only b changes
+    pub only_a: usize,
+    pub only_b: usize,
+    /// a's changes that b doesn't have are all plain values (properties) — could be copied over
+    pub only_a_values: bool,
+    pub only_b_values: bool,
+    /// Names of a few clashing parts
+    pub clash_examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictAssetSummary {
+    pub asset_path: String,
+    /// The game has this asset (otherwise mods added it and are compared to each other)
+    pub in_game: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_error: Option<String>,
+    pub mods: std::collections::HashMap<i64, ModAssetChanges>,
+    pub pairs: Vec<AssetPairChanges>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictAssetDiff {
+    pub asset_path: String,
+    pub game: AssetVersionInfo,
+    pub mods: std::collections::HashMap<i64, AssetVersionInfo>,
+    pub rows: Vec<AssetDiffRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,6 +294,22 @@ pub struct ModConflict {
     pub mod_id: i64,
     pub conflicting_mods: Vec<i64>,
     pub conflicting_files: Vec<String>,
+    /// Content fingerprint of each conflicting file in this mod (same value in two
+    /// mods = byte-identical file, so that overlap is harmless). Missing if unreadable.
+    #[serde(default)]
+    pub file_hashes: std::collections::HashMap<String, String>,
+    /// How many files the mod has in total (to tell when every one is overridden)
+    #[serde(default)]
+    pub total_files: usize,
+    /// The mod's files that no other mod has (always used), up to a limit
+    #[serde(default)]
+    pub other_files: Vec<String>,
+    /// Conflicting files that aren't in the game (added by mods, e.g. a shared library),
+    /// only filled when the game's pak could be read (see `game_checked`)
+    #[serde(default)]
+    pub new_files: Vec<String>,
+    #[serde(default)]
+    pub game_checked: bool,
 }
 
 #[cfg(test)]
@@ -190,6 +345,11 @@ mod tests {
             mod_id: 1,
             conflicting_mods: vec![2],
             conflicting_files: vec!["fsd/content/a.uasset".to_string()],
+            file_hashes: Default::default(),
+            total_files: 1,
+            other_files: vec![],
+            new_files: vec![],
+            game_checked: false,
         })
         .expect("mod conflict should serialize");
 

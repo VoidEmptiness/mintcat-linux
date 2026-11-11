@@ -80,12 +80,22 @@ body::before {
     vertical-align: center;
 }
 
+/* The avatar's slot is as tall as the header and centers it, like the buttons next to it
+   (as an inline box it sat on the text baseline, a few pixels lower than the buttons) */
+.app-header-avatar-slot {
+    display: inline-flex;
+    align-items: center;
+    height: 48px;
+}
+
 .app-header-avatar {
     align-items: center;
+    justify-content: center;
     text-align: center;
     display: inline-flex;
-    margin-top: 8px;
+    flex-shrink: 0;
     margin-right: 10px;
+    cursor: pointer;
 }
 
 .ant-header-start-button {
@@ -160,6 +170,13 @@ body::before {
 
 .ant-tree-content .ant-tree-treenode:last-child {
     margin-bottom: 10px;
+}
+
+/* Dragging a row first selected its text from the grip to where the pointer went, and the
+   highlight stayed after the drop */
+.ant-tree-content .ant-tree-treenode {
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .ant-tree-title {
@@ -272,6 +289,28 @@ body::before {
 
 .save-btn-unsaved .anticon {
     color: var(--ant-color-primary) !important;
+}
+
+/* Deploy (Save Changes): orange "Deploy" with changes the game doesn't have, green "Deployed",
+   red when none of the mods are in the game (uninstalled, never deployed, or gone) */
+.deploy-btn {
+    font-weight: 600;
+    padding-inline: 10px;
+    /* the same width for Deploy, Deploying… and Deployed, so the toolbar doesn't jump */
+    min-width: 122px;
+}
+
+/* Its colors win over the Dark theme's rule that makes every plain button grey */
+.ant-btn.deploy-btn.deploy-btn-deployed.deploy-btn-deployed:not(.ant-btn-primary),
+.ant-btn.deploy-btn.deploy-btn-deployed.deploy-btn-deployed:not(.ant-btn-primary):hover {
+    color: #52c41a !important;
+    border-color: #52c41a !important;
+}
+
+.ant-btn.deploy-btn.deploy-btn-off.deploy-btn-off:not(.ant-btn-primary),
+.ant-btn.deploy-btn.deploy-btn-off.deploy-btn-off:not(.ant-btn-primary):hover {
+    color: #ff4d4f !important;
+    border-color: #ff4d4f !important;
 }
 
 .home-footer-bar {
@@ -725,4 +764,246 @@ body::before {
 
 .ant-progress-rail {
    background-color: transparent !important; 
+}
+/* "· 23 · 2 off" after a folder's name: how many mods it holds and how many are off */
+.folder-counts {
+    font-weight: 400;
+    opacity: 0.7;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* Mod list: note / endorsed-liked / tracked-subscribed columns at the right of each row */
+.mod-status-columns {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-inline-start: 2px;
+    flex: none;
+    /* dragged width, but never narrower than the cells (18px each, 2px apart) */
+    width: max(var(--mod-col-flags-w, 58px), calc(var(--mod-flag-cells, 3) * 20px - 2px));
+}
+
+.mod-status-cell {
+    min-width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 0;
+}
+
+.mod-status-icon {
+    font-size: 13px;
+    color: var(--ant-color-text-tertiary);
+}
+
+.mod-status-on {
+    color: var(--ant-color-primary);
+}
+
+.mod-status-down {
+    color: var(--ant-color-error);
+}
+
+.mod-status-note {
+    color: var(--ant-color-warning);
+    cursor: pointer;
+}
+
+.mod-status-note:hover {
+    filter: brightness(1.2);
+}
+
+.mod-note-tooltip {
+    white-space: pre-wrap;
+    max-height: 260px;
+    overflow: hidden;
+}
+
+/* Browse Mods / menus: track, endorse, subscribe, like buttons that are on */
+.support-buttons .support-on {
+    color: var(--ant-color-primary);
+}
+
+.support-buttons .support-on.support-down {
+    color: var(--ant-color-error);
+}
+
+/* Compact view: only the marks a mod has, after its tags */
+.mod-status-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-inline-start: 2px;
+}
+
+/* Columns view: version, game version, status and tags in fixed columns, header over the list */
+.mod-col {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.mod-col-version {
+    width: var(--mod-col-version-w, 88px);
+}
+
+.mod-col-version .ant-select {
+    max-width: 100% !important;
+    margin-right: 0 !important;
+}
+
+.mod-col-game {
+    width: var(--mod-col-game-w, 46px);
+}
+
+.mod-col-status {
+    width: var(--mod-col-status-w, 96px);
+}
+
+.mod-col-tags {
+    width: var(--mod-col-tags-w, 150px);
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+
+.mod-col-tags:empty {
+    mask-image: none;
+}
+
+.mod-col .ant-tag,
+.mod-col-tag {
+    margin-inline-end: 0;
+    flex: none;
+}
+
+.mod-col-date {
+    font-size: 12px;
+    color: var(--ant-color-text-secondary);
+    padding-inline-start: 4px;
+}
+
+.mod-list-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    font-size: 12px;
+    color: var(--ant-color-text-secondary);
+    border-bottom: 1px solid var(--ant-color-border-secondary);
+    padding-inline-end: var(--mod-list-header-end, 8px);
+    user-select: none;
+}
+
+.mod-list-header-name {
+    margin-inline-end: auto;
+    padding-inline-start: 8px;
+}
+
+/* the header's flag cells: an icon over each column of marks */
+.mod-list-header-flags {
+    position: relative;
+    font-size: 12px;
+}
+
+.mod-list-header-flags .mod-status-cell {
+    cursor: default;
+}
+
+.mod-list-header .mod-col {
+    mask-image: none;
+}
+
+/* Column edges you can drag (columns view header) */
+.mod-list-header-col {
+    position: relative;
+    overflow: visible;
+}
+
+.mod-list-header-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-inline-start: 4px;
+}
+
+.mod-col-resizer {
+    position: absolute;
+    left: -5px;
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    cursor: col-resize;
+    z-index: 2;
+}
+
+.mod-col-resizer::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 4px;
+    bottom: 4px;
+    width: 1px;
+    background: var(--ant-color-border);
+}
+
+.mod-col-resizer:hover::after,
+.mod-col-resizing .mod-col-resizer::after {
+    background: var(--ant-color-primary);
+    width: 2px;
+}
+
+body.mod-col-resizing,
+body.mod-col-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+/* Mod list search box: a filter choice with how many mods it finds, and the hint under the list */
+.mod-filter-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.mod-filter-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mod-filter-count {
+    flex: none;
+    font-size: 12px;
+    color: var(--ant-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+.mod-filter-typed {
+    color: var(--ant-color-text-secondary);
+}
+
+.mod-filter-hint {
+    padding: 6px 12px 4px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--ant-color-text-tertiary);
+    border-top: 1px solid var(--ant-color-border-secondary);
+}
+
+/* group titles in the filter list are titles, not choices */
+.mod-filter-popup .ant-select-item-group {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ant-color-text-tertiary);
+    padding-top: 8px;
+    cursor: default;
 }

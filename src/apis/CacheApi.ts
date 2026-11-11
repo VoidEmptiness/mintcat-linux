@@ -2,6 +2,7 @@ import {writeFile, size, exists, mkdir, remove, readDir, copyFile} from "@tauri-
 import {cacheDir} from '@tauri-apps/api/path';
 import {path} from "@tauri-apps/api";
 import {convertFileSrc} from "@tauri-apps/api/core";
+import {isOwnDownload} from "@/services/DownloadsCatalog";
 import {md5} from "@/utils/CryptApi.ts";
 import {NetworkApi} from "@/apis/NetworkApi.ts";
 import {IntegrateApi} from "@/apis/IntegrateApi.ts";
@@ -47,6 +48,11 @@ export class CacheApi {
     private static legacySanitizeFileName(name: string): string {
         const illegalChars = /[\\/:*?"<>|]/g;
         return name.replace(illegalChars, '');
+    }
+
+    /** The file name a download of this mod (base name) and version gets in the download folder */
+    public static modCacheFileName(modName: string, version: string): string {
+        return CacheApi.buildModCacheFileName(modName, version);
     }
 
     private static buildModCacheFileName(modName: string, version: string): string {
@@ -195,7 +201,8 @@ export class CacheApi {
         if (entry.isDirectory) {
             return CacheApi.ownedCacheDirectories.has(name);
         }
-        return CacheApi.ownedCacheFiles.has(name) || name.endsWith(".zip") || name.endsWith(".part");
+        // only files named like MINTCAT's downloads: the folder may be one the user keeps other zips in
+        return CacheApi.ownedCacheFiles.has(name) || isOwnDownload(name);
     }
 
     private static async removeCacheEntry(cacheDirPath: string, entry: Awaited<ReturnType<typeof readDir>>[number]): Promise<boolean> {
@@ -238,6 +245,8 @@ export class CacheApi {
     public static async cleanOrphanedPartFiles(): Promise<number> {
         let cleaned = 0;
         try {
+            // On the very first start the cache folder isn't set yet (it's set a moment later)
+            if (!(await (await StorageAPI.getSettings()).getCachePath())) return 0;
             const cacheDirPath = await this.getCacheDir();
             const entries = await readDir(cacheDirPath);
             for (const entry of entries) {

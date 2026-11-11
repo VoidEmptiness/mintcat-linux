@@ -5,6 +5,7 @@ export {
     RoutePolicy,
     getMintcatProxyModeResolved,
     normalizeMintcatProxyMode,
+    DEFAULT_MINTCAT_PROXY_MODE,
     setMintcatProxyModeResolved,
 } from './RoutePolicy';
 export {

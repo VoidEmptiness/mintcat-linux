@@ -23,9 +23,13 @@
     "security": {
       "csp": null,
       "assetProtocol": {
-        "scope": [
-          "**/*"
-        ],
+        "scope": {
+          "allow": [
+            "**/images/*.png",
+            "**/avatars/avatar_*.png"
+          ],
+          "requireLiteralLeadingDot": false
+        },
         "enable": true
       }
     }
@@ -40,6 +44,9 @@
   },
   "plugins": {
     "fs": {
+      "requireLiteralLeadingDot": false
+    },
+    "opener": {
       "requireLiteralLeadingDot": false
     },
     "updater": {

@@ -183,11 +183,15 @@ async function readInternalAssetActive(
     game: InternalAssetGame,
     channel: ReleaseChannel,
     fileName: string,
+    validate = true,
 ): Promise<{ version: string; path: string; valid: boolean }> {
     const key = internalAssetKey(component, game, channel);
     const state = await HotUpdateStoreApi.getComponentState(key);
     const version = state.activeVersion || '0';
     const path = await internalAssetPath(component, game, channel, version, state.activeFileName || fileName);
+    if (!validate) {
+        return { version, path, valid: version !== '0' && await exists(path) };
+    }
     const valid = version !== '0' && await validateZipPath(path);
     if (!valid && version !== '0') {
         await HotUpdateStoreApi.markComponentFailed(key, version, state.activeFileName || fileName, {
@@ -513,15 +517,18 @@ async function downloadAndValidateZip(
 export async function getInternalAssetPaths(
     game: InternalAssetGame = 'drg',
     includeUe4ss = true,
+    /** validate: false only looks whether the files are there (no zip check, nothing removed) */
+    options: { validate?: boolean } = {},
 ): Promise<InternalAssetPaths | null> {
+    const validate = options.validate !== false;
     const settings = await StorageAPI.getSettings();
     const channel = await settings.getReleaseChannel();
     const ue4ssActive = includeUe4ss
-        ? await readInternalAssetActive('ue4ssl', game, channel, ASSET_UE4SSL)
+        ? await readInternalAssetActive('ue4ssl', game, channel, ASSET_UE4SSL, validate)
         : { version: '0', path: undefined as string | undefined, valid: true };
     const secondManifestKey: 'drg' | 'rc' = game === 'rc' ? 'rc' : 'drg';
     const secondAssetName = game === 'rc' ? ASSET_RC : ASSET_DRG;
-    const secondActive = await readInternalAssetActive(secondManifestKey, game, channel, secondAssetName);
+    const secondActive = await readInternalAssetActive(secondManifestKey, game, channel, secondAssetName, validate);
     const hasUe4ss = !includeUe4ss || ue4ssActive.valid;
     if (game === 'rc') {
         if (hasUe4ss && secondActive.valid) {

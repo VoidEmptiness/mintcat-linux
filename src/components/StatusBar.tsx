@@ -3,6 +3,8 @@ import { t } from "i18next";
 import { Flex, Progress, ProgressProps, theme } from "antd";
 import { emitEvent, useEventListener } from "@/events";
 import { taskQueueAPI } from 'tauri-plugin-task-queue';
+import { ActivityLog } from "@/services/ActivityLog";
+import { LogToggleButton } from "@/components/LogPanel";
 
 const ProgressColors: ProgressProps['strokeColor'] = {
     '0%': '#108ee9',
@@ -79,6 +81,7 @@ function StatusBar() {
     // ✅ 任务队列监听器 - 项目中唯一的任务监听点
     useEffect(() => {
         let unlisten: (() => void) | undefined;
+        const loggedTasks = new Set<string>();
 
         const setupTaskListener = async () => {
             unlisten = await taskQueueAPI.onTaskUpdated((task) => {
@@ -113,6 +116,14 @@ function StatusBar() {
                 } else if (task.status === 'completed') {
                     // 完成后清空进度条
                     emitEvent("status-bar-percent", 0).catch(console.error);
+                    // Keep the task's final message in the Log panel (once per task)
+                    if (!loggedTasks.has(task.id)) {
+                        loggedTasks.add(task.id);
+                        const last = task.messages && task.messages.length > 0
+                            ? task.messages[task.messages.length - 1].message
+                            : undefined;
+                        ActivityLog.recordTaskFinished(last, false);
+                    }
                 } else if (task.status === 'failed') {
                     // 失败后清空进度条
                     emitEvent("status-bar-percent", 0).catch(console.error);
@@ -155,13 +166,21 @@ function StatusBar() {
                     borderRadius: 0
                 }}
             />
-            <div className="status-bar-message" style={{
-                lineHeight: "30px",
-                marginLeft: "10px",
-                color: getLogLevelColor(logLevel)
-            }}>
-                {message}
-            </div>
+            <Flex align="center">
+                {/* Log toggle sits bottom-left, like Amethyst */}
+                <LogToggleButton/>
+                <div className="status-bar-message" style={{
+                    lineHeight: "30px",
+                    marginLeft: "10px",
+                    color: getLogLevelColor(logLevel),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                }}>
+                    {message}
+                </div>
+            </Flex>
         </Flex>
     );
 }
@@ -183,6 +202,14 @@ StatusBar.log = async function(message: string, level?: LogLevel) {
  */
 StatusBar.info = async function(message: string) {
     await emitEvent('status-bar-log', { message, level: 'info' });
+};
+
+/**
+ * Progress step: shown in the status bar but not added to the Log (e.g. one line per mod while
+ * checking 300 mods for updates; the Log gets the start and the result instead)
+ */
+StatusBar.progress = async function(message: string) {
+    await emitEvent('status-bar-log', { message, level: 'info', transient: true });
 };
 
 /**

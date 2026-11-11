@@ -4,11 +4,13 @@ use std::ptr;
 
 use anyhow::{Context, Result};
 use mintcat_integrator_api::{
-    CheckForeignPaksRequest, CheckInstalledRequest, CheckModConflictsRequest, FindGamePakRequest,
+    CheckForeignPaksRequest, CheckInstalledRequest, CheckModConflictsRequest, ConflictAssetDiffRequest,
+    ConflictAssetsSummaryRequest, FindGamePakRequest,
     InstallEvent, InstallProgress, InstallRequest, PathRequest, UninstallModsRequest,
 };
 use mintcat_integrator_core::{
-    check_foreign_paks_by_game_path, check_installed_by_game_path, check_mod_conflicts_from_json,
+    check_foreign_paks_by_game_path, check_installed_by_game_path, check_mod_conflicts_with_game,
+    conflict_asset_diff, conflict_assets_summary,
     find_game_pak_by_name, install_mods_with_progress, is_valid_mod_directory, is_valid_zip,
     uninstall_mods_by_game_path,
 };
@@ -97,6 +99,8 @@ pub unsafe extern "C" fn mintcat_backend_runtime_manifest(
                 {"name": "check_foreign_paks_in_paks_dir", "mode": "requestResponse"},
                 {"name": "is_valid_unpacked_mod", "mode": "requestResponse"},
                 {"name": "check_mod_conflicts", "mode": "requestResponse"},
+                {"name": "conflict_asset_diff", "mode": "requestResponse"},
+                {"name": "conflict_assets_summary", "mode": "requestResponse"},
                 {"name": "validate_zip_file", "mode": "requestResponse"},
                 {"name": "launch_steam_game", "mode": "requestResponse"},
                 {"name": "check_steam_game", "mode": "requestResponse"},
@@ -282,8 +286,12 @@ pub unsafe extern "C" fn mintcat_integrator_check_mod_conflicts(
         response_json,
         error_message,
         |request: CheckModConflictsRequest| {
-            check_mod_conflicts_from_json(&request.mod_list_json, request.game_name.as_deref())
-                .map_err(anyhow::Error::msg)
+            check_mod_conflicts_with_game(
+                &request.mod_list_json,
+                request.game_name.as_deref(),
+                request.game_pak_path.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)
         },
     )
 }
@@ -362,8 +370,22 @@ unsafe fn backend_invoke(
         }),
         "check_mod_conflicts" => {
             backend_command_response(envelope.payload, |request: CheckModConflictsRequest| {
-                check_mod_conflicts_from_json(&request.mod_list_json, request.game_name.as_deref())
-                    .map_err(anyhow::Error::msg)
+                check_mod_conflicts_with_game(
+                    &request.mod_list_json,
+                    request.game_name.as_deref(),
+                    request.game_pak_path.as_deref(),
+                )
+                .map_err(anyhow::Error::msg)
+            })
+        }
+        "conflict_asset_diff" => {
+            backend_command_response(envelope.payload, |request: ConflictAssetDiffRequest| {
+                conflict_asset_diff(request)
+            })
+        }
+        "conflict_assets_summary" => {
+            backend_command_response(envelope.payload, |request: ConflictAssetsSummaryRequest| {
+                conflict_assets_summary(request)
             })
         }
         "validate_zip_file" => backend_command_response(envelope.payload, |request: PathRequest| {
@@ -416,12 +438,27 @@ fn check_steam_game(exe_name: String) -> bool {
         // Match against the full command line so games running under
         // Proton/Wine are found too. The frontend passes names like
         // "FSD.exe" while the real Proton process is
-        // ".../FSD-Win64-Shipping.exe", so also try the stem ("FSD").
+        // ".../FSD-Win64-Shipping.exe", so also look for "<stem>-Win64-Shipping.exe".
+        // Only whole executable names count: a bare "FSD" also matched any
+        // program with a path through the game's FSD folder on its command line
+        // (a terminal, an editor, a file manager…), which blocked installs.
         let stem = exe_name
             .strip_suffix(".exe")
             .or_else(|| exe_name.strip_suffix(".EXE"))
             .unwrap_or(&exe_name);
-        [exe_name.as_str(), stem].iter().any(|pattern| {
+        let escape = |text: &str| {
+            text.chars()
+                .flat_map(|c| {
+                    let special = "\\.^$|?*+()[]{}".contains(c);
+                    special.then_some('\\').into_iter().chain(std::iter::once(c))
+                })
+                .collect::<String>()
+        };
+        let patterns = [
+            format!("(^|[/\\\\ ]){}( |$)", escape(&exe_name)),
+            format!("{}-Win64-Shipping\\.exe", escape(stem)),
+        ];
+        patterns.iter().any(|pattern| {
             std::process::Command::new("pgrep")
                 .args(["-f", pattern])
                 .output()
@@ -531,4 +568,39 @@ fn string_to_c(value: String) -> CString {
             .collect::<Vec<_>>();
         CString::new(bytes).expect("nul bytes were removed")
     })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod game_check_tests {
+    use super::check_steam_game;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    /// A process whose command line looks like `title` (sleep with a different argv[0])
+    fn fake_process(title: &str) -> Child {
+        let child = Command::new("sleep").arg0(title).arg("30").spawn().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        child
+    }
+
+    #[test]
+    fn finds_the_game_but_not_programs_in_its_folder() {
+        // a file manager / editor with a path through the game's FSD folder is not the game
+        let mut editor = fake_process("nano /games/Deep Rock Galactic/FSD/Saved/SaveGames/x.sav");
+        assert!(!check_steam_game("FSD.exe".to_string()), "a path through FSD/ must not count");
+        editor.kill().unwrap();
+        let _ = editor.wait();
+
+        // the Proton launcher and the shipping exe both count
+        for title in [
+            "Z:\\games\\Deep Rock Galactic\\FSD.exe",
+            "/games/Deep Rock Galactic/FSD/Binaries/Win64/FSD-Win64-Shipping.exe",
+        ] {
+            let mut game = fake_process(title);
+            assert!(check_steam_game("FSD.exe".to_string()), "{title} should count as the game");
+            game.kill().unwrap();
+            let _ = game.wait();
+        }
+    }
 }

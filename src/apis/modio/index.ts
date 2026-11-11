@@ -17,6 +17,14 @@ const MODIO_GAME_ID = 2475;
 const MODIO_UID = "13595141";
 const authResolver = new AuthResolver();
 
+/** mod.io didn't take a change: readOnly (token without write access, or expired), inactive account, tooMany, other */
+export class ModioWriteError extends Error {
+    constructor(public readonly kind: 'readOnly' | 'inactive' | 'tooMany' | 'other', detail: string) {
+        super(detail);
+        this.name = 'ModioWriteError';
+    }
+}
+
 export class ModioApi {
     private static platformIdByNameIdCache = new Map<string, number>();
     private static platformIdByNameIdInFlight = new Map<string, Promise<number>>();
@@ -55,11 +63,111 @@ export class ModioApi {
         }
     }
 
+    /**
+     * A change on mod.io for the signed-in account (subscribe, rate). Needs a token with write
+     * access: a read-only token gets ModioWriteError('readOnly').
+     */
+    private static async writeRequest(method: 'POST' | 'DELETE', path: string, form: Record<string, string> = {}) {
+        const url = (await ModioApi.getHost()) + path;
+        const resp = (await NetworkApi.request<Response>({
+            service: 'modio.write',
+            url,
+            method,
+            authPolicy: 'modioToken',
+            proxyPolicy: 'mintcatProxyFallback',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'},
+            body: new URLSearchParams(form).toString(),
+            parseAs: 'response',
+        })).response;
+        if (resp.ok) return;
+        let errorRef = 0;
+        let detail = '';
+        try {
+            const data = await resp.json();
+            errorRef = Number(data?.error?.error_ref ?? 0);
+            detail = String(data?.error?.message ?? '');
+        } catch {
+            // no body
+        }
+        // already done: rated the same way / subscribed / nothing to take back
+        if (errorRef === 15028 || errorRef === 15043) return;
+        if (resp.status === 401) throw new ModioWriteError('readOnly', detail || `mod.io ${resp.status}`);
+        if (resp.status === 403 && errorRef === 11006) throw new ModioWriteError('inactive', detail);
+        if (resp.status === 429) throw new ModioWriteError('tooMany', detail);
+        throw new ModioWriteError('other', detail || `mod.io ${resp.status}`);
+    }
+
+    /** All pages of a /me list for this game */
+    private static async getAllOfMine<T>(path: string): Promise<T[]> {
+        const result: T[] = [];
+        for (let offset = 0; offset < 5000; offset += 100) {
+            const data = await ModioApi.getRequest(`${path}${path.includes('?') ? '&' : '?'}game_id=${MODIO_GAME_ID}&_limit=100&_offset=${offset}`);
+            const page = (data?.data ?? []) as T[];
+            result.push(...page);
+            if (page.length < 100 || result.length >= Number(data?.result_total ?? 0)) break;
+        }
+        return result;
+    }
+
+    /** Ids of this game's mods the account is subscribed to */
+    public static async getMySubscribedIds(): Promise<number[]> {
+        const mods = await ModioApi.getAllOfMine<{ id?: number; game_id?: number }>('/me/subscribed');
+        return mods.filter(m => m.game_id == null || m.game_id === MODIO_GAME_ID).map(m => Number(m.id)).filter(id => id > 0);
+    }
+
+    /** The account's ratings of this game's mods: mod id → 1 (like) / -1 (dislike) */
+    public static async getMyRatings(): Promise<Map<number, number>> {
+        const ratings = await ModioApi.getAllOfMine<{ mod_id?: number; game_id?: number; rating?: number }>('/me/ratings');
+        return new Map(ratings
+            .filter(r => (r.game_id == null || r.game_id === MODIO_GAME_ID) && Number(r.mod_id) > 0 && r.rating)
+            .map(r => [Number(r.mod_id), Number(r.rating)]));
+    }
+
+    public static async setSubscribed(modId: number, subscribed: boolean): Promise<void> {
+        await ModioApi.writeRequest(subscribed ? 'POST' : 'DELETE', `/games/${MODIO_GAME_ID}/mods/${modId}/subscribe`);
+    }
+
+    /** 1 like, -1 dislike, 0 take the rating back */
+    public static async setRating(modId: number, rating: 1 | -1 | 0): Promise<void> {
+        await ModioApi.writeRequest('POST', `/games/${MODIO_GAME_ID}/mods/${modId}/ratings`, {rating: String(rating)});
+    }
+
+    /** What a mod needs, without messages (Browse Mods cards) */
+    public static async getDependenciesQuiet(modId: number): Promise<{ id: number; name: string; nameId: string }[]> {
+        const data = await ModioApi.getRequest(`/games/${MODIO_GAME_ID}/mods/${modId}/dependencies`);
+        return ((data?.data ?? []) as any[])
+            .map(d => ({id: Number(d.mod_id ?? d.id), name: String(d.name ?? ''), nameId: String(d.name_id ?? '')}))
+            .filter(d => d.id > 0);
+    }
+
     public static parseModLinks(link: string) {
         let regex = new RegExp('^https://mod\.io/g/drg/m/([^/#]+)');
         let match = link.match(regex);
         if (match !== null) {
             return match[1];
+        }
+    }
+
+    /**
+     * Resolve a mod.io link to its mod without showing any messages
+     * (used to check links in the Add Mod box as they're typed).
+     */
+    public static async lookupModLink(url: string): Promise<
+        | { status: 'found'; name: string }
+        | { status: 'notFound' }
+        | { status: 'invalid' }
+        | { status: 'error'; message: string }
+    > {
+        const nameId = ModioApi.parseModLinks(url.trim());
+        if (!nameId) {
+            return {status: 'invalid'};
+        }
+        try {
+            const data = await ModioApi.getRequest(`/games/${MODIO_GAME_ID}/mods?name_id=${encodeURIComponent(nameId)}`);
+            const mod = data?.data?.[0];
+            return mod ? {status: 'found', name: String(mod.name ?? nameId)} : {status: 'notFound'};
+        } catch (e) {
+            return {status: 'error', message: e instanceof Error ? e.message : String(e)};
         }
     }
 
@@ -210,6 +318,26 @@ export class ModioApi {
     }
 
     /**
+     * Mod infos for these mod.io ids, 100 per request. Errors go to the caller without a toast
+     * (used for background work such as hover descriptions).
+     */
+    public static async getModInfoByIdListQuiet(modIds: number[]): Promise<ModInfo[]> {
+        const results: ModInfo[] = [];
+        for (let i = 0; i < modIds.length; i += 100) {
+            const batch = modIds.slice(i, i + 100);
+            const data = await ModioApi.getRequest(`/games/${MODIO_GAME_ID}/mods?id-in=${batch.join(",")}&_limit=100`);
+            results.push(...((data?.data ?? []) as ModInfo[]));
+        }
+        return results;
+    }
+
+    /** Like getModInfoByName, without a toast on errors */
+    public static async getModInfoByNameQuiet(nameId: string): Promise<ModInfo | undefined> {
+        const data = await ModioApi.getRequest(`/games/${MODIO_GAME_ID}/mods?name_id=${encodeURIComponent(nameId)}`);
+        return (data?.data ?? [])[0];
+    }
+
+    /**
      * 获取单个 mod 的标签（Get Mod Tags）
      * 列表接口可能不返回 tags，一键更新时需单独拉取以刷新标签
      * @see https://docs.mod.io/restapi/docs/get-mod-tags
@@ -236,26 +364,28 @@ export class ModioApi {
      * @see https://docs.mod.io/restapiref/#get-mods
      */
     private static getModListSortParam(
-        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name',
+        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files',
         sortOrder?: 'asc' | 'desc'
     ): string | undefined {
         if (!sortBy || !sortOrder) return undefined;
         const desc = sortOrder === 'desc';
         const map: Record<string, string> = {
             date: desc ? '-date_updated' : 'date_updated',
+            created: desc ? '-date_live' : 'date_live',
             downloads: desc ? '-downloads_total' : 'downloads_total',
             subscribers: desc ? '-subscribers_total' : 'subscribers_total',
             rating: desc ? '-ratings_weighted_aggregate' : 'ratings_weighted_aggregate',
             name: desc ? '-name' : 'name',
         };
-        return map[sortBy];
+        // a sort mod.io doesn't have (e.g. kept from another source): its default, recently updated
+        return map[sortBy] ?? map.date;
     }
 
     public static async getModList(
         pageNo: number = 0,
         pageSize: number = 20,
         name: string = undefined,
-        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name',
+        sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files',
         sortOrder?: 'asc' | 'desc'
     ): Promise<ModInfo[]> {
         try {

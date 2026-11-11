@@ -126,7 +126,12 @@ pub async fn backend_invoke(
         return Ok(serde_json::json!({ "ok": true }));
     }
 
-    invoke_backend_runtime_command(&app, &command, payload, None).map_err(|error| format!("{error:#}"))
+    // Long calls (conflict check, asset comparison) must not hold up an async worker
+    tauri::async_runtime::spawn_blocking(move || {
+        invoke_backend_runtime_command(&app, &command, payload, None).map_err(|error| format!("{error:#}"))
+    })
+    .await
+    .map_err(|error| format!("backend call failed: {error}"))?
 }
 
 pub fn stop_proxy_runtime_blocking(app: &AppHandle) -> Result<()> {
@@ -256,12 +261,8 @@ pub fn ensure_bundled_runtime(app: &AppHandle) -> Result<()> {
 }
 
 fn active_runtime_path(app: &AppHandle) -> Result<PathBuf> {
-    if let Err(error) = ensure_bundled_runtime(app) {
-        log::warn!(
-            "[IntegratorRuntime] failed to prepare bundled runtime: {:#}",
-            error
-        );
-    }
+    // No ensure_bundled_runtime here: it only loads the library to check its ABI (and logs),
+    // and the call itself loads it and checks the ABI anyway — loading it twice per call
     active_library_path(app).context("integrator runtime is not available")
 }
 

@@ -1,4 +1,4 @@
-import { App, Modal } from "antd";
+import { App, Button, Modal } from "antd";
 import type { ModalFuncProps } from "antd/es/modal/interface";
 import React from "react";
 
@@ -10,6 +10,16 @@ export function setMessageBoxThemedModal(modal: ReturnType<typeof App.useApp>["m
 }
 
 export class MessageBox {
+
+    /** The themed modal API (for dialogs that update their own buttons) */
+    static api(): Pick<typeof Modal, "confirm"> {
+        return themedModal ?? Modal;
+    }
+
+    /** Themed information dialog (closes with OK); returns a handle to close it from code */
+    static info(props: ModalFuncProps): { destroy: () => void } {
+        return (themedModal ?? Modal).info(props);
+    }
 
     static async confirm(props: ModalFuncProps): Promise<boolean> {
         return new Promise((resolve) => {
@@ -31,6 +41,38 @@ export class MessageBox {
             } else {
                 run(Modal);
             }
+        });
+    }
+
+
+    /**
+     * Themed question with several answers: resolves with the key of the button clicked, or
+     * null when closed or cancelled
+     */
+    static async choose(props: ModalFuncProps, choices: { key: string; label: string; danger?: boolean; primary?: boolean }[],
+                        cancelText: string): Promise<string | null> {
+        return new Promise((resolve) => {
+            let done = false;
+            let instance: { destroy: () => void } | null = null;
+            const finish = (value: string | null) => {
+                if (done) return;
+                done = true;
+                resolve(value);
+                instance?.destroy();
+            };
+            const footer = React.createElement("div", {style: {display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 16}},
+                React.createElement(Button, {key: "cancel", onClick: () => finish(null)}, cancelText),
+                ...choices.map(c => React.createElement(Button, {
+                    key: c.key,
+                    type: c.primary ? "primary" : "default",
+                    danger: c.danger,
+                    onClick: () => finish(c.key),
+                }, c.label)));
+            instance = (themedModal ?? Modal).confirm({
+                ...props,
+                footer,
+                onCancel: () => finish(null),
+            });
         });
     }
 

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import {decodeHtmlEntities, hasHtmlEntities} from "@/utils/HtmlEntities";
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { IoC } from '@/core/IoC.ts';
 import { StorageAPI } from '@/storage';
@@ -12,7 +13,7 @@ import {
     applyMintcatApiRoutingFromSettings,
 } from '@/apis/mintcat/routing';
 import { CacheApi } from '@/apis/CacheApi';
-import { closeDb } from '@/storage/db/Client';
+import { closeDb, initDb } from '@/storage/db/Client';
 import { setMintcatProxyModeResolved } from '@/services/network';
 import { taskQueueAPI, TaskPriority } from 'tauri-plugin-task-queue';
 
@@ -81,6 +82,7 @@ export class AppInitializer {
             this.currentPhase = InitPhase.Database;
             console.log('[AppInitializer] Initializing database...');
             await IoC.get(StorageAPI);
+            await this.ensureWalJournal();
 
             // Phase 2: Data Migration
             this.currentPhase = InitPhase.Migration;
@@ -90,6 +92,11 @@ export class AppInitializer {
             // 一次性修复：清除历史数据中被错误写入的 usedVersion
             // usedVersion 应只在用户手动切换版本时才写入，但旧逻辑在添加 mod 时错误地写入了当前版本
             await this.fixUsedVersionData();
+            await this.fixEscapedModNames();
+            if (this.isMainWindow()) {
+                // in the background: the keyring may first ask to be unlocked
+                void this.moveKeysToKeyring();
+            }
 
             // 应用网络代理设置（使后端下载等请求可走 Clash 等代理）
             await this.applyNetworkProxy();
@@ -189,6 +196,56 @@ export class AppInitializer {
      * 导致所有 mod 都被视为"版本锁定"状态。
      * 通过 settings 表的标记确保只执行一次。
      */
+    /**
+     * New databases are created in WAL mode (sqlx does that on creation), but a database put
+     * in place by a restore can be in rollback-journal mode, which sqlx then keeps. With the
+     * connection pool that mode lost writes in testing, so switch such a database back to WAL.
+     */
+    private static async ensureWalJournal(): Promise<void> {
+        try {
+            const db = await initDb();
+            const rows = await db.select<{ journal_mode?: string }[]>('PRAGMA journal_mode');
+            if (String(rows[0]?.journal_mode ?? '').toLowerCase() !== 'wal') {
+                await db.select('PRAGMA journal_mode=WAL');
+                console.log('[AppInitializer] Switched the database to WAL mode');
+            }
+        } catch (error) {
+            console.warn('[AppInitializer] Could not check the database journal mode', error);
+        }
+    }
+
+    /** API keys saved as plain text by earlier versions go to the system keyring */
+    private static async moveKeysToKeyring(): Promise<void> {
+        try {
+            const moved = await (await StorageAPI.getOAuths()).moveKeysToKeyring();
+            if (moved > 0) console.info(`[AppInitializer] Moved ${moved} key(s) to the system keyring`);
+        } catch (error) {
+            console.warn('[AppInitializer] Could not move keys to the keyring:', error);
+        }
+    }
+
+    /**
+     * Names saved from mod.io before they were un-escaped ("Cargo &amp; Lost Pack Progress"):
+     * store them as plain text (cheap: only names with an escaped character are touched)
+     */
+    private static async fixEscapedModNames(): Promise<void> {
+        try {
+            const mods = await StorageAPI.getMods();
+            let fixed = 0;
+            for (const mod of await mods.getAllMods()) {
+                if (mod.modId == null || (!hasHtmlEntities(mod.displayName) && !hasHtmlEntities(mod.originalName))) continue;
+                await mods.updateMod(mod.modId, {
+                    displayName: decodeHtmlEntities(mod.displayName ?? ""),
+                    originalName: decodeHtmlEntities(mod.originalName ?? ""),
+                });
+                fixed++;
+            }
+            if (fixed > 0) console.info(`[AppInitializer] Un-escaped ${fixed} mod name(s)`);
+        } catch (error) {
+            console.warn('[AppInitializer] Failed to un-escape mod names:', error);
+        }
+    }
+
     private static async fixUsedVersionData(): Promise<void> {
         try {
             const settings = await StorageAPI.getSettings();
@@ -242,6 +299,10 @@ export class AppInitializer {
         try {
             await applyMintcatApiRoutingFromSettings({
                 cachedProbeTimeoutMs: 1500,
+                // don't hold up the mod list (or the Add Mod window) for a network check
+                probeCached: false,
+                // the Add Mod window runs this too: re-probing every server each time it opens isn't needed
+                refreshInBackground: !window.location.hash.includes('add_mod_dialog'),
                 logPrefix: '[AppInitializer]',
             });
         } catch (error) {

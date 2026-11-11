@@ -1,8 +1,9 @@
-import { readFile, writeFile, exists, stat, remove, copyFile } from "@tauri-apps/plugin-fs";
+import { readFile, writeFile, exists, remove, copyFile } from "@tauri-apps/plugin-fs";
 import { path } from "@tauri-apps/api";
 import { configDir } from "@tauri-apps/api/path";
 import { getVersion } from "@tauri-apps/api/app";
 import { NetworkApi } from "@/apis/NetworkApi";
+import { snapshotDatabase } from "@/storage/db/Client";
 import { AuthResolver, type NetworkProxyPolicy } from "@/services/network";
 import i18n from "@/locales/i18n";
 import type { CloudBackupConfig, CloudBackupMetadata, CloudBackupRecord } from "./types";
@@ -21,7 +22,8 @@ async function getRestorePath(): Promise<string> {
     return `${await getDatabasePath()}${RESTORE_SUFFIX}`;
 }
 
-async function getBackupPath(): Promise<string> {
+/** Where a restore keeps the database it replaced (mintcat.sqlite.bak, plus -wal/-shm) */
+export async function getBackupPath(): Promise<string> {
     return `${await getDatabasePath()}${BACKUP_SUFFIX}`;
 }
 
@@ -154,8 +156,19 @@ export class CloudBackupApi {
             throw new Error(i18n.t("cloudBackup.error.database_not_found"));
         }
 
-        const fileBytes = await readFile(dbPath);
-        const fileStat = await stat(dbPath);
+        // Upload a consistent snapshot: the file on disk alone can miss recent changes that
+        // are still in mintcat.sqlite-wal
+        const snapshotPath = `${dbPath}.upload-${Date.now()}`;
+        let fileBytes: Uint8Array<ArrayBuffer>;
+        try {
+            await snapshotDatabase(snapshotPath);
+            fileBytes = new Uint8Array(await readFile(snapshotPath));
+        } finally {
+            for (const suffix of ["", "-wal", "-shm"]) {
+                await remove(`${snapshotPath}${suffix}`).catch(() => undefined);
+            }
+        }
+        const fileStat = {size: fileBytes.byteLength};
         const checksum = await sha256Hex(fileBytes);
         const appVersion = await getVersion();
 
@@ -312,9 +325,25 @@ export class CloudBackupApi {
         if (await exists(backupPath)) {
             await remove(backupPath);
         }
+        // The database runs in WAL mode: recent changes may still sit in mintcat.sqlite-wal.
+        // Keep them with the .bak copy (SQLite reads <file>-wal next to <file>) and never leave
+        // the old -wal/-shm next to the restored file, where they would be applied to it.
+        for (const suffix of ["-wal", "-shm"]) {
+            if (await exists(`${backupPath}${suffix}`)) {
+                await remove(`${backupPath}${suffix}`);
+            }
+        }
         if (await exists(dbPath)) {
             await copyFile(dbPath, backupPath);
+            if (await exists(`${dbPath}-wal`)) {
+                await copyFile(`${dbPath}-wal`, `${backupPath}-wal`);
+            }
             await CloudBackupApi.removeWithRetry(dbPath);
+        }
+        for (const suffix of ["-wal", "-shm"]) {
+            if (await exists(`${dbPath}${suffix}`)) {
+                await CloudBackupApi.removeWithRetry(`${dbPath}${suffix}`);
+            }
         }
 
         await copyFile(restorePath, dbPath);

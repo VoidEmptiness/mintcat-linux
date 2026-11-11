@@ -1,6 +1,6 @@
 pub mod devtools;
 
-use crate::{control_plane, download, frontend, hot_update, integrator, network};
+use crate::{backup, control_plane, download, frontend, hot_update, integrator, network, system_icon};
 use tauri::{Emitter, Manager, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_sentry::{minidump, sentry};
 
@@ -50,6 +50,8 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            crate::secret_store::restrict_app_folders(app.handle());
+            crate::clipboard_watch::start();
             if let Err(error) = frontend::rollback_unconfirmed_pending(app.handle()) {
                 log::warn!("[FrontendUpdate] rollback check failed: {}", error);
             }
@@ -110,8 +112,9 @@ pub fn run() {
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                    // a new file for every launch (older launches: Settings → Logs)
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("mintcat".to_string()),
+                        file_name: Some(crate::app_logs::session_log_name()),
                     }),
                 ])
                 .max_file_size(50_000_000 /* 50MB */)
@@ -131,8 +134,31 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             download::download_file,
             download::cancel_download,
+            crate::app_logs::list_app_logs,
+            crate::app_logs::prune_app_logs,
+            crate::app_logs::append_activity_log,
+            crate::app_logs::read_app_log,
+            crate::secret_store::secret_store_get,
+            crate::secret_store::secret_store_set,
+            crate::secret_store::secret_store_delete,
+            crate::secret_store::secret_store_available,
             network::set_network_proxy,
             network::fetch_update_manifest,
+            network::fetch_repository_json,
+            backup::zip_create,
+            backup::zip_list,
+            backup::zip_read_text,
+            backup::zip_extract,
+            backup::rclone_run,
+            backup::rclone_cancel,
+            backup::file_set_mtime,
+            backup::file_set_readonly,
+            crate::clipboard_watch::clipboard_change_count,
+            crate::system_info::session_summary,
+            system_icon::system_icon_status,
+            system_icon::system_icon_apply,
+            system_icon::system_icon_restore,
+            system_icon::set_window_icon,
             control_plane::control_plane_invoke,
             hot_update::get_control_plane_status,
             hot_update::get_hot_update_store_manifest,

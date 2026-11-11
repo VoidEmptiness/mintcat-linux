@@ -39,6 +39,18 @@ export class StartupUpdateCheckTask implements ITask {
         const manifest = await prefetchUpdateManifest();
         await context.updateProgress(30);
 
+        // Linux build: upstream only publishes Windows runtimes, and a hot frontend
+        // from upstream would replace this build's patched UI. Rebuild to update instead.
+        if ((await platform()) !== 'windows') {
+            const proxyRuntime = manifest.find(matchesProxyRuntime);
+            if (proxyRuntime?.latestVersion) {
+                localStorage.setItem('mintcat_proxy_latest_version', proxyRuntime.latestVersion);
+            }
+            await context.setMessage(t('Check Updates Finished'));
+            await context.updateProgress(100);
+            return;
+        }
+
         try {
             const settings = await StorageAPI.getSettings();
             const channel = await settings.getReleaseChannel();

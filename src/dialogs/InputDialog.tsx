@@ -1,5 +1,5 @@
 import React from 'react';
-import {Form, Input, Modal} from 'antd';
+import {Form, Input, Modal, type InputRef} from 'antd';
 import {t} from "i18next";
 
 interface InputDialogStates {
@@ -14,6 +14,7 @@ type InputCallback = (name: string) => void;
 export class InputDialog extends React.Component<any, InputDialogStates> {
 
     private readonly localFormRef: any = React.createRef();
+    private readonly inputRef = React.createRef<InputRef>();
 
     private callback: InputCallback;
 
@@ -49,8 +50,16 @@ export class InputDialog extends React.Component<any, InputDialogStates> {
     }
 
     private async handleOk() {
-        const values = this.localFormRef.current.getFieldsValue();
-        this.callback?.call(this, values["text"]);
+        // an empty or blank name is not accepted (the field shows why)
+        let values: { text?: string };
+        try {
+            values = await this.localFormRef.current.validateFields();
+        } catch {
+            return;
+        }
+        const text = String(values.text ?? "").trim();
+        if (!text) return;
+        this.callback?.call(this, text);
         this.setState({isModalOpen: false});
     }
 
@@ -64,13 +73,19 @@ export class InputDialog extends React.Component<any, InputDialogStates> {
                    open={this.state.isModalOpen}
                    onOk={this.handleOk}
                    onCancel={this.handleCancel}
+                   afterOpenChange={(open) => {
+                       if (open) this.inputRef.current?.focus({cursor: "all"});
+                   }}
             >
                 <Form ref={this.localFormRef} layout="vertical"
                       initialValues={{
                           text: this.state.defaultValue,
                       }}>
-                    <Form.Item name="text" label={t("Please Input Name")} rules={[{required: true}]}>
+                    <Form.Item name="text" label={t("Please Input Name")}
+                               rules={[{required: true, whitespace: true, message: t("Please Input Name")}]}>
                         <Input autoComplete={"off"}
+                               ref={this.inputRef}
+                               onPressEnter={this.handleOk}
                                allowClear/>
                     </Form.Item>
                 </Form>

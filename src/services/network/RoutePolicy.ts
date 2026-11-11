@@ -1,3 +1,4 @@
+import { BuildInfo } from '@/buildInfo';
 import { StorageAPI } from '@/storage';
 import {
     MINTCAT_API_ORIGINS,
@@ -12,14 +13,21 @@ import type {
     NetworkRoutePlan,
 } from './RequestTypes';
 
-let resolvedMintcatProxyMode: MintcatProxyMode = 'auto';
+/**
+ * Custom builds (with an edition label such as "Linux+") default to never using the MintCat
+ * relay: in "auto" a failed direct mod.io request is retried through it, mod.io login header
+ * included. Upstream builds keep "auto" for users where mod.io is blocked.
+ */
+export const DEFAULT_MINTCAT_PROXY_MODE: MintcatProxyMode = BuildInfo.edition ? 'disabled' : 'auto';
+
+let resolvedMintcatProxyMode: MintcatProxyMode = DEFAULT_MINTCAT_PROXY_MODE;
 let hasResolvedMintcatProxyMode = false;
 
 export function normalizeMintcatProxyMode(value?: string | null): MintcatProxyMode {
-    if (value === 'enabled' || value === 'disabled') {
+    if (value === 'enabled' || value === 'disabled' || value === 'auto') {
         return value;
     }
-    return 'auto';
+    return DEFAULT_MINTCAT_PROXY_MODE;
 }
 
 export function setMintcatProxyModeResolved(mode?: MintcatProxyMode | string | null): void {

@@ -1,6 +1,10 @@
 import {t} from "i18next";
-import React, {useState} from "react";
-import {Dropdown, MenuProps, Select, Spin, Switch, Tag, theme, Tooltip} from "antd";
+import {ContextMenu} from "@/components/ContextMenu";
+import React, {useState, useSyncExternalStore} from "react";
+import {Button, Flex, InputNumber, MenuProps, Popover, Select, Spin, Switch, Tag, theme, Tooltip} from "antd";
+import {ModDescriptionHover} from "@/pages/HomePage/ModDescriptionHover";
+import {BgColorsOutlined, CloseCircleFilled, CloudDownloadOutlined, DisconnectOutlined, FolderOpenOutlined, ThunderboltOutlined} from "@ant-design/icons";
+import {ModListAppearance, readableTextOn} from "@/services/ModListAppearance";
 import {
     ClockCircleOutlined,
     DeleteOutlined,
@@ -15,8 +19,15 @@ import {
     PlusCircleOutlined,
     SyncOutlined,
     VerticalAlignTopOutlined,
+    VerticalAlignMiddleOutlined,
+    ColumnHeightOutlined,
     WarningOutlined,
+    PlayCircleOutlined,
+    PauseCircleOutlined,
+    AimOutlined,
+    FileTextOutlined,
 } from "@ant-design/icons";
+import {folderCounts} from "./FolderOps";
 import {open} from "@tauri-apps/plugin-shell";
 import {emitEvent, useFilteredEventListener} from "@/events";
 import {ModSourceType} from "@/storage/db/Schema.ts";
@@ -32,7 +43,19 @@ import StatusBar from "@/components/StatusBar.tsx";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
 import {TimeUtils} from "@/utils/TimeUtils.ts";
 import type {FolderInfo} from "./TreeView";
-import {ConflictService} from "@/services/ConflictService";
+import {ConflictService, type ModConflictSummary} from "@/services/ConflictService";
+import {ModConflictDetails} from "@/components/ConflictDetails";
+import {SUMMARY_COLOR} from "@/services/ConflictInsights";
+import {TreeViewConverter} from "./TreeViewConverter";
+import {useInstallOrder, useShowLocalPaths} from "@/services/ListDisplay";
+import {RepositoryUpdates} from "@/services/RepositoryUpdates";
+import {logActivity} from "@/services/ActivityLog";
+import {ModNotes} from "@/services/ModNotes";
+import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
+import {editModNote, removeModNote} from "@/dialogs/ModNoteDialog";
+import {handleSupportMenu, supportMenuItems} from "@/components/SupportButtons";
+import {ModStatusIcons} from "./ModStatusIcons";
+import {GameTag, StatusTags, TagList, UploadedDate, useRowInfo} from "./ModInfoColumns";
 
 const {useToken} = theme;
 
@@ -42,6 +65,16 @@ const pendingEnabledChanges = new Map<number, boolean>();
 // 模块级别的版本切换锁定，防止快速重复点击导致下载冲突
 // key: modId, value: { isProcessing: boolean, abortController?: AbortController }
 const versionSwitchLocks = new Map<number, { isProcessing: boolean; currentVersion?: string }>();
+
+/** Number of mods this one shares files with (null if none); `_version` as for summarizeConflicts */
+function conflictCountAt(modId: number, _version: number): number | null {
+    return ConflictService.getConflict(modId)?.conflictingMods.length ?? null;
+}
+
+/** Conflict summary for a row; `_version` makes conflict data changes a compiler dependency */
+function summarizeConflicts(modId: number, order: number[], _version: number): ModConflictSummary {
+    return ConflictService.summarize(modId, order);
+}
 
 export function getVersionSwitchLock(modId: number): { isProcessing: boolean; currentVersion?: string } {
     return versionSwitchLocks.get(modId) || { isProcessing: false };
@@ -119,6 +152,8 @@ interface WarningState {
     hasConflict: boolean;
 }
 const warningStateCache = new Map<number, WarningState>();
+/** The row data each cached state was computed from (see the effect in ModTreeViewWarring) */
+const warningBasisCache = new Map<number, string>();
 
 export function getCachedWarningState(modId: number, fallback: WarningState): WarningState {
     return warningStateCache.get(modId) ?? fallback;
@@ -131,8 +166,10 @@ export function setCachedWarningState(modId: number, state: WarningState): void 
 export function clearCachedWarningState(modId?: number): void {
     if (modId !== undefined) {
         warningStateCache.delete(modId);
+        warningBasisCache.delete(modId);
     } else {
         warningStateCache.clear();
+        warningBasisCache.clear();
     }
 }
 
@@ -166,63 +203,153 @@ async function getModById(modId: number): Promise<CompleteModData | null> {
 }
 
 
-function ModTreeViewFolder({nodeData, onMenuClick, folders, onMoveToFolder}: {
+function ModTreeViewFolder({nodeData, onMenuClick, folders, onMoveToFolder, expanded, folderPick, onRowClick}: {
     nodeData: any;
     onMenuClick: any;
     folders?: FolderInfo[];
     onMoveToFolder?: (sourceKey: string, targetFolderKey: string) => void;
+    /** Whether this folder is open (the menu offers the opposite) */
+    expanded?: boolean;
+    /** This folder is one of several ticked folders: the menu acts on all of them */
+    folderPick?: { count: number; exclude: string[] };
+    /** Ctrl/Shift-click ticks the folder (all its mods) */
+    onRowClick?: (nodeKey: string, e: React.MouseEvent) => void;
 }) {
-    // 过滤掉当前文件夹，避免移动到自身
-    const moveToChildren: MenuProps['items'] = folders
-        ?.filter(f => f.key !== nodeData.key)
-        .map(f => ({
-            key: `move_to_${f.key}`,
-            label: f.title,
-            icon: <FolderOutlined />,
-        })) || [];
+    const lookVersion = useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version);
+    const colorKey: string = nodeData.colorKey ?? nodeData.key;
+    const folderColor = ModListAppearance.folderColor(colorKey, lookVersion);
+    // The tree also puts the folder's name in a title attribute, which the system shows as a
+    // tooltip on top of the folder's right-click menu. The name is already on the row.
+    const rowRef = React.useRef<HTMLSpanElement>(null);
+    React.useLayoutEffect(() => {
+        rowRef.current?.closest(".ant-tree-node-content-wrapper")?.removeAttribute("title");
+    });
+    // 过滤掉当前文件夹，避免移动到自身 (and its subfolders: a folder can't go inside itself)
+    const ownSubfolders = new Set<string>();
+    const collectSubfolders = (nodes: any[] | undefined) => {
+        for (const child of nodes ?? []) {
+            if (!child.isLeaf) {
+                ownSubfolders.add(String(child.key));
+                collectSubfolders(child.children);
+            }
+        }
+    };
+    collectSubfolders(nodeData.children);
+    const many = folderPick && folderPick.count > 1 ? folderPick.count : 0;
+    const excluded = new Set(many ? folderPick!.exclude : []);
+    const moveToChildren: MenuProps['items'] = [
+        {key: 'move_folders_to:root', label: t('folders.topLevel'), icon: <VerticalAlignTopOutlined />},
+        ...(folders
+            ?.filter(f => f.key !== nodeData.key && !ownSubfolders.has(String(f.key)) && !excluded.has(String(f.key)))
+            .map(f => ({
+                // one folder: the existing move (into the top of the folder); several: all at once
+                key: many ? `move_folders_to:${f.key}` : `move_to_${f.key}`,
+                label: f.title,
+                icon: <FolderOutlined />,
+            })) ?? []),
+    ];
 
-    const contextMenusGroup: MenuProps['items'] = [
+    // How many mods it holds and how many are off; a switch flipped in it updates the count
+    const [, recount] = React.useReducer((n: number) => n + 1, 0);
+    const modIds = React.useMemo(() => {
+        const ids = new Set<number>();
+        const walk = (list: any[] | undefined) => {
+            for (const child of list ?? []) {
+                if (child.isLeaf) ids.add(child.modId);
+                else walk(child.children);
+            }
+        };
+        walk(nodeData.children);
+        return ids;
+    }, [nodeData]);
+    useFilteredEventListener('mod-enabled-change', (p) => modIds.has(p.modId), () => recount(), [modIds]);
+    useFilteredEventListener('mod-batch-enabled-change', (p) => p.modIds.some(id => modIds.has(id)), () => recount(), [modIds]);
+    const counts = folderCounts(nodeData, (m: any) => getPendingEnabled(m.modId, m.enabled !== false));
+    // During a search the counts are of the shown mods; the folder's actions still act on all of them
+    const filtering = TreeViewConverter.isFiltering();
+
+    const manyMenu: MenuProps['items'] = [
+        {type: 'group', label: t('folders.pickedCount', {count: many})},
+        {label: t('folders.enableAllMany', {count: many}), key: 'folders_enable', icon: <PlayCircleOutlined />},
+        {label: t('folders.disableAllMany', {count: many}), key: 'folders_disable', icon: <PauseCircleOutlined />},
+        {label: t('folders.onlyTheseMany'), key: 'folders_only', icon: <AimOutlined />},
+        {type: 'divider'},
+        {label: t('folders.expandMany', {count: many}), key: 'expand_folder', icon: <ColumnHeightOutlined />},
+        {label: t('folders.collapseMany', {count: many}), key: 'collapse_folder', icon: <VerticalAlignMiddleOutlined />},
+        {type: 'divider'},
+        {label: t('folders.colorMany', {count: many}), key: 'folders_color', icon: <BgColorsOutlined />},
+        {label: t('folders.moveMany', {count: many}), key: 'move_to', icon: <DragOutlined />, children: moveToChildren},
+        {type: 'divider'},
+        {label: t('folders.deleteMany', {count: many}), key: 'delete_group', icon: <DeleteOutlined />, danger: true},
+    ];
+
+    const contextMenusGroup: MenuProps['items'] = many ? manyMenu : [
         {label: t('Add Mod'), key: 'add_mod', icon: <PlusCircleOutlined />},
         {label: t('Add New Group'), key: 'add_new_group', icon: <FolderAddOutlined />},
         {label: t('Add Sub Group'), key: 'add_sub_group', icon: <FolderAddOutlined />},
         {label: t('Rename Group'), key: 'rename_group', icon: <EditOutlined />},
+        {label: t('folderColor.menu'), key: 'folder_color', icon: <BgColorsOutlined />},
         ...(moveToChildren.length > 0 ? [{
             label: t('Move To'),
             key: 'move_to',
             icon: <DragOutlined />,
             children: moveToChildren,
         }] : []),
+        {type: 'divider'},
+        {label: t('folders.enableAll'), key: 'folders_enable', icon: <PlayCircleOutlined />, disabled: counts.total === 0 && !filtering},
+        {label: t('folders.disableAll'), key: 'folders_disable', icon: <PauseCircleOutlined />, disabled: counts.total === 0 && !filtering},
+        {label: t('folders.onlyThis'), key: 'folders_only', icon: <AimOutlined />, disabled: counts.total === 0 && !filtering},
+        {type: 'divider'},
+        // this folder only (the toolbar button opens or closes all of them)
+        expanded
+            ? {label: t('folders.collapseOne'), key: 'collapse_folder', icon: <VerticalAlignMiddleOutlined />}
+            : {label: t('folders.expandOne'), key: 'expand_folder', icon: <ColumnHeightOutlined />},
+        {type: 'divider'},
         {label: t('Delete Group'), key: 'delete_group', icon: <DeleteOutlined />}
     ];
     
     return (
-        <Dropdown trigger={['contextMenu']}
+        <ContextMenu
                   menu={{
                       items: contextMenusGroup,
                       onClick: (e) => {
+                          // The click would reach the tree through the menu (React passes events
+                          // up through portals) and count as a plain click on the folder there,
+                          // which ends a Ctrl/Shift selection
+                          e.domEvent.stopPropagation();
                           // 处理 "移动到" 子菜单点击
                           if (e.key.startsWith('move_to_folder-')) {
                               const targetFolderKey = e.key.replace('move_to_', '');
                               onMoveToFolder?.(nodeData.key, targetFolderKey);
+                          } else if (e.key === 'folder_color' && !many) {
+                              ModListAppearance.openFolderColor(colorKey, String(nodeData.title ?? ""));
                           } else {
                               onMenuClick(e.key, nodeData.key);
                           }
                       }
                   }}>
-                    <span style={{
+                    <span ref={rowRef} style={{
                         width: "100%",
                         display: "block",
                         paddingLeft: "6px",
                         borderRadius: "6px",
-                        backgroundColor: "rgba(238,238,238,0.2)",
+                        backgroundColor: folderColor ?? "rgba(238,238,238,0.2)",
+                        color: folderColor ? readableTextOn(folderColor) : undefined,
                     }}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                              e.stopPropagation();
+                              if (e.ctrlKey || e.metaKey || e.shiftKey) onRowClick?.(String(nodeData.key), e);
+                          }}
                           onMouseDown={(e) => e.stopPropagation()}
                           onFocus={(e) => e.stopPropagation()}
                     >
                       <b><FolderOutlined/> {nodeData.title}</b>
+                      <span className="folder-counts">
+                          {filtering ? ` · ${t('folders.shownCount', {count: counts.total})}` : ` · ${counts.total}`}
+                          {counts.off > 0 ? ` · ${t('folders.off', {count: counts.off})}` : ""}
+                      </span>
                     </span>
-        </Dropdown>
+        </ContextMenu>
     );
 }
 
@@ -408,10 +535,17 @@ function ModTreeViewVersionSelect({nodeData}) {
                         .filter(file => NexusModsApi.getFileId(file) > 0)
                         .sort((a, b) => (b.uploaded_timestamp ?? 0) - (a.uploaded_timestamp ?? 0));
                     const latestFileId = NexusModsApi.getFileId(nexusFiles[0]);
+                    // several files on the page (e.g. a version without mini-icons): name them too,
+                    // or the same version number shows up once per file
+                    const currentNames = new Set(nexusFiles
+                        .filter(file => !['OLD_VERSION', 'ARCHIVED', 'REMOVED'].includes((file.category_name || '').toUpperCase()))
+                        .map(file => (file.name || '').trim()));
+                    const withName = currentNames.size > 1;
 
                     for (const file of nexusFiles) {
                         const fileId = NexusModsApi.getFileId(file);
-                        const label = getNexusmodsFileLabel(file, modInfo?.version, latestFileId);
+                        const base = getNexusmodsFileLabel(file, modInfo?.version, latestFileId);
+                        const label = withName && file.name && file.name.trim() !== base ? `${base} · ${file.name.trim()}` : base;
                         optionList.push({
                             value: JSON.stringify({
                                 ...file,
@@ -520,6 +654,9 @@ function ModTreeViewVersionSelect({nodeData}) {
                     nodeData.profileModId,
                     isLatestVersion ? "" : newVersion
                 );
+                await logActivity('info', isLatestVersion
+                    ? t("log.list.versionNewest", {name: String(nodeData.title ?? ""), version: newVersion})
+                    : t("log.list.versionPinned", {name: String(nodeData.title ?? ""), version: newVersion}), undefined, 'list');
             }
 
             const modItem = await getModById(nodeData.modId);
@@ -625,7 +762,7 @@ function ModTreeViewVersionSelect({nodeData}) {
 }
 
 
-function ModTreeViewWarring({nodeData}) {
+function ModTreeViewWarring({nodeData, onLocate}: { nodeData: any; onLocate?: () => void }) {
     // 使用 ref 存储 nodeData 以便在回调中访问最新值
     const nodeDataRef = React.useRef(nodeData);
     nodeDataRef.current = nodeData;
@@ -658,7 +795,9 @@ function ModTreeViewWarring({nodeData}) {
     }
 
     const checkLocalNoFound = () => {
-        return nodeDataRef.current.localNoFound === true;
+        const data = nodeDataRef.current;
+        // Tree nodes carry `localNoFound`; live updates carry full mod data with `status.isLocalNotFound`
+        return data.localNoFound === true || data.status?.isLocalNotFound === true;
     }
 
     const checkOnlineUnavailable = () => {
@@ -692,8 +831,13 @@ function ModTreeViewWarring({nodeData}) {
             isOnlineUnavailable: checkOnlineUnavailable(),
             hasConflict: checkConflict(),
         };
-        if (!warningStateCache.has(nodeData.modId)) {
+        // The cache covers remounts that carry old row data (e.g. after scrolling); when the
+        // row data itself changed since the cached state was made, the fresh data wins.
+        const basis = JSON.stringify([nodeData.downloadProgress, nodeData.lastUpdateDate, nodeData.onlineUpdateDate,
+            nodeData.onlineAvailable, nodeData.localNoFound]);
+        if (!warningStateCache.has(nodeData.modId) || warningBasisCache.get(nodeData.modId) !== basis) {
             setCachedWarningState(nodeData.modId, fallback);
+            warningBasisCache.set(nodeData.modId, basis);
         }
         const cached = getCachedWarningState(nodeData.modId, fallback);
         setWarningState(cached);
@@ -735,23 +879,56 @@ function ModTreeViewWarring({nodeData}) {
         [nodeData.modId]
     );
 
+    // Inputs from the stores as hook values, so the React Compiler recomputes when they change
+    const installOrder = useInstallOrder();
+    const conflictVersion = useSyncExternalStore(ConflictService.subscribe, ConflictService.version);
+    const repoVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
+    const repoUpdate = RepositoryUpdates.updateStateAt(nodeData.modId, repoVersion);
+    const conflictSummary = hasConflict
+        ? summarizeConflicts(nodeData.modId, installOrder, conflictVersion)
+        : 'harmless';
+    const conflictColor: Record<ModConflictSummary, string> = SUMMARY_COLOR;
+
     // 生成冲突提示信息
+    const conflictModCount = conflictCountAt(nodeData.modId, conflictVersion);
     const getConflictTooltip = () => {
-        const conflict = ConflictService.getConflict(nodeData.modId);
-        if (!conflict) return t("conflict.withOtherMods");
-        
-        const fileCount = conflict.conflictingFiles.length;
-        const modCount = conflict.conflictingMods.length;
-        return `${t("File conflict")}: ${fileCount} ${t("files conflict with")} ${modCount} ${t("other mods")}`;
+        if (conflictModCount === null) return t("conflict.withOtherMods");
+        return t(`conflict.summary.${conflictSummary}`, {mods: conflictModCount});
     };
 
     return (
         <>
             {
                 hasConflict &&
-                <Tooltip title={getConflictTooltip()}>
-                                <span style={{color: "#faad14", marginRight: "4px"}}>
+                <Popover trigger="click"
+                         placement="bottomLeft"
+                         destroyOnHidden
+                         title={t("File conflict")}
+                         content={
+                             // Portal clicks bubble to the tree row in React; keep them here
+                             <div onClick={(e) => e.stopPropagation()}
+                                  onDoubleClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onContextMenu={(e) => e.stopPropagation()}>
+                                 <ModConflictDetails modId={nodeData.modId}/>
+                             </div>
+                         }>
+                    <Tooltip title={`${getConflictTooltip()} — ${t("conflict.clickForDetails")}`}>
+                                <span style={{color: conflictColor[conflictSummary], marginRight: "4px", cursor: "pointer"}}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onMouseDown={(e) => e.stopPropagation()}>
                                     <WarningOutlined/>
+                                </span>
+                    </Tooltip>
+                </Popover>
+            }
+
+            {
+                repoUpdate && repoUpdate.kind !== 'upToDate' &&
+                <Tooltip title={t(repoUpdate.kind === 'newer' ? "repoUpdate.iconNewer" : "repoUpdate.iconDiffers",
+                    {date: new Date(repoUpdate.latest.postedAt).toLocaleString()})}>
+                                <span style={{color: "orange", marginRight: "4px"}}>
+                                    <ClockCircleOutlined/>
                                 </span>
                 </Tooltip>
             }
@@ -776,9 +953,24 @@ function ModTreeViewWarring({nodeData}) {
 
             {
                 isLocalNoFound &&
-                <Tooltip title={t("File Not Found")}>
-                                <span className="text-red mr-4">
-                                    <ExclamationCircleOutlined/>
+                <Tooltip title={
+                    <span>
+                        {t("mod.localFileMissing")}
+                        <br/>
+                        <span style={{fontFamily: "monospace", fontSize: 12, wordBreak: "break-all"}}>
+                            {nodeDataRef.current.url || nodeDataRef.current.download?.cachePath || nodeData.url}
+                        </span>
+                        {onLocate && <><br/><i>{t("localMods.clickToLocate")}</i></>}
+                    </span>
+                }>
+                                <span className="text-red mr-4"
+                                      style={{cursor: onLocate ? "pointer" : undefined}}
+                                      onClick={(e) => {
+                                          e.stopPropagation();
+                                          onLocate?.();
+                                      }}
+                                      onMouseDown={(e) => e.stopPropagation()}>
+                                    <CloseCircleFilled/>
                                 </span>
                 </Tooltip>
             }
@@ -788,7 +980,10 @@ function ModTreeViewWarring({nodeData}) {
 }
 
 
-function ModTreeViewProgressBackground({nodeData, children, ...restProps}) {
+function ModTreeViewProgressBackground({nodeData, children, onRowClick, ref: outerRef, ...restProps}: any) {
+    // Mods in a colored folder (or a subfolder of one) get a stripe of its color
+    const lookVersion = useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version);
+    const folderColor = ModListAppearance.colorForPath(nodeData.folderPath, lookVersion);
     const [downloadProgress, setDownloadProgress] = useState(() =>
         getCachedDownloadProgress(nodeData.modId, nodeData.downloadProgress)
     );
@@ -811,6 +1006,19 @@ function ModTreeViewProgressBackground({nodeData, children, ...restProps}) {
 
     const isDownloading = downloadProgress !== 100;
 
+    // The tree repeats the mod's name in a title attribute on the row, which the system shows as
+    // a second tooltip over the row's own tooltips and menu
+    const rowRef = React.useRef<HTMLDivElement | null>(null);
+    React.useLayoutEffect(() => {
+        rowRef.current?.closest(".ant-tree-node-content-wrapper")?.removeAttribute("title");
+    });
+    // the row menu (Dropdown) may pass its own ref, which has to reach the element too
+    const setRowRef = (el: HTMLDivElement | null) => {
+        rowRef.current = el;
+        if (typeof outerRef === "function") outerRef(el);
+        else if (outerRef) outerRef.current = el;
+    };
+
     // 渐变背景样式：从左到右的进度色块
     const progressStyle: React.CSSProperties = isDownloading ? {
         background: `linear-gradient(
@@ -823,9 +1031,19 @@ function ModTreeViewProgressBackground({nodeData, children, ...restProps}) {
     } : {};
 
     const stopBubble = (e: React.SyntheticEvent) => e.stopPropagation();
+    // Clicks don't reach the tree (see stopBubble); Ctrl/Shift-clicks select mods through onRowClick
+    const onClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onRowClick?.(nodeData.key, e);
+    };
+    const onMouseDown = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        // Shift/Ctrl-click would otherwise select the rows' text
+        if (e.shiftKey || e.ctrlKey || e.metaKey) e.preventDefault();
+    };
 
     return (
-        <div style={{
+        <div ref={setRowRef} style={{
             width: "100%",
             boxSizing: "border-box",
             display: "flex",
@@ -833,10 +1051,11 @@ function ModTreeViewProgressBackground({nodeData, children, ...restProps}) {
             borderRadius: "4px",
             padding: "2px 4px",
             transition: "background 0.3s ease",
+            ...(folderColor ? {boxShadow: `inset 3px 0 0 ${folderColor}`} : {}),
             ...progressStyle
         }} {...restProps}
-            onClick={stopBubble}
-            onMouseDown={stopBubble}
+            onClick={onClick}
+            onMouseDown={onMouseDown}
             onFocus={stopBubble}
         >
             {children}
@@ -907,9 +1126,67 @@ function ModTreeViewLocalTitle({nodeData}) {
         [nodeData.modId]
     );
 
+    const showPath = useShowLocalPaths();
+    const filePath: string = nodeData.url || "";
+
+    // How the mod is linked to a repository post (Pak Hub): its own color and icon when turned on
+    const repoVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
+    const lookVersion = useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version);
+    const link = RepositoryUpdates.linkForModAt({modId: nodeData.modId, url: nodeData.url}, repoVersion);
+    const look = ModListAppearance.get(lookVersion);
+    const autoColor = link?.via === 'auto' && look.autoLinkColorEnabled ? look.autoLinkColor : undefined;
+    const nameStyle: React.CSSProperties = autoColor
+        ? {color: autoColor, opacity: enabled ? 1 : 0.55}
+        : {color: enabled ? token.colorText : token.colorTextSecondary};
+    const linkIcon = look.linkIcons ? (
+        <Tooltip mouseEnterDelay={0.3} title={
+            !link ? t("linkIcon.none")
+                : link.via === 'auto' ? t("linkIcon.auto")
+                    : link.via === 'added' ? t("linkIcon.added")
+                        : t("linkIcon.manual")
+        }>
+            <span style={{
+                marginRight: 6,
+                flexShrink: 0,
+                // linked ones stand out from the grey "not linked" icon (a grey chain looked the same)
+                color: !link ? token.colorTextQuaternary
+                    : link.via === 'auto' ? (look.autoLinkColor || token.colorInfo)
+                        : token.colorLink,
+            }}>
+                {!link ? <DisconnectOutlined/>
+                    : link.via === 'auto' ? <ThunderboltOutlined/>
+                        : link.via === 'added' ? <CloudDownloadOutlined/>
+                            : <LinkOutlined/>}
+            </span>
+        </Tooltip>
+    ) : null;
+
+    if (!showPath || !filePath) {
+        return (
+            <span style={{display: "inline-flex", alignItems: "center", minWidth: 0}}>
+                {linkIcon}
+                <span style={nameStyle}>{nodeData.title}</span>
+            </span>
+        );
+    }
     return (
-        <span style={{color: enabled ? token.colorText : token.colorTextSecondary}}>
-            {nodeData.title}
+        <span style={{display: "inline-flex", flexDirection: "column", minWidth: 0, lineHeight: 1.25, padding: "1px 0"}}>
+            <span style={{display: "inline-flex", alignItems: "center", minWidth: 0}}>
+                {linkIcon}
+                <span style={nameStyle}>{nodeData.title}</span>
+            </span>
+            <span title={filePath}
+                  style={{
+                      color: token.colorTextTertiary,
+                      fontSize: 11,
+                      fontFamily: "monospace",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      maxWidth: "60vw",
+                  }}>
+                {filePath}
+            </span>
         </span>
     );
 }
@@ -966,7 +1243,9 @@ function ModTreeViewTitle({nodeData}) {
             color: enabled &&
             downloadProgress === 100 ? token.colorPrimary : token.colorTextDisabled
         }}
-           onClick={async () => {
+           onClick={async (e) => {
+               // Ctrl/Shift-click selects the mod instead (handled by the row)
+               if (e.ctrlKey || e.metaKey || e.shiftKey) return;
                await open(nodeData.url);
            }}
         >
@@ -977,25 +1256,203 @@ function ModTreeViewTitle({nodeData}) {
 }
 
 
+/**
+ * The install position number in front of a mod. Clicking it asks for another position and moves
+ * the mod there (see TreeView.onMoveToPosition).
+ */
+function PositionBadge({nodeKey, position, enabled, onMove, groupSize = 0, groupFirst}: {
+    nodeKey: string;
+    position: number;
+    enabled: boolean;
+    onMove?: (sourceKey: string, position: number) => unknown;
+    /** How many picked mods move together with this one (0: only this one) */
+    groupSize?: number;
+    /** Number of the first of them */
+    groupFirst?: number;
+}) {
+    const inGroup = groupSize > 1;
+    const startAt = inGroup ? (groupFirst ?? position) : position;
+    const {token} = useToken();
+    const total = useInstallOrder().length;
+    const [open, setOpen] = useState(false);
+    const [value, setValue] = useState<number | null>(position);
+    const [moving, setMoving] = useState(false);
+    const inputRef = React.useRef<any>(null);
+
+    React.useEffect(() => {
+        if (open) {
+            setValue(startAt);
+            // select the number so typing replaces it
+            setTimeout(() => inputRef.current?.select?.(), 30);
+        }
+    }, [open, startAt]);
+
+    const target = value == null ? null : Math.min(Math.max(Math.round(value), 1), Math.max(total, 1));
+    // a group may also be pulled together at its own number
+    const canMove = !!onMove && target != null && (inGroup || target !== position) && !moving;
+
+    const move = async () => {
+        if (!canMove || target == null) return;
+        setMoving(true);
+        try {
+            await onMove!(nodeKey, target);
+        } finally {
+            setMoving(false);
+            setOpen(false);
+        }
+    };
+
+    // clicks and presses on the badge belong to it, not to the row (select) or the tree (drag)
+    const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
+    const badge = (
+        <span onClick={(e) => {
+                  stop(e);
+                  if (onMove && !e.ctrlKey && !e.shiftKey && !e.metaKey) setOpen(true);
+              }}
+              onMouseDown={stop}
+              onDoubleClick={stop}
+              style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minWidth: "40px",
+                  height: "18px",
+                  borderRadius: "9px",
+                  backgroundColor: enabled ? token.colorPrimaryBg : token.colorBgTextHover,
+                  color: enabled ? token.colorPrimary : token.colorTextDisabled,
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  marginRight: "6px",
+                  padding: "0 5px",
+                  lineHeight: 1,
+                  fontVariantNumeric: "tabular-nums",
+                  flexShrink: 0,
+                  cursor: onMove ? "pointer" : undefined,
+                  outline: open ? `1px solid ${token.colorPrimary}` : undefined,
+              }}>
+            {position}
+        </span>
+    );
+
+    if (!onMove) {
+        return (
+            <Tooltip title={t("list.installPositionHint", {position})} mouseEnterDelay={0.6}>
+                {badge}
+            </Tooltip>
+        );
+    }
+    return (
+        <Popover open={open}
+                 onOpenChange={(next) => {
+                     if (!moving) setOpen(next);
+                 }}
+                 trigger="click"
+                 placement="bottomLeft"
+                 destroyOnHidden
+                 title={inGroup ? t("list.moveGroupTitle", {count: groupSize}) : t("list.moveToPositionTitle")}
+                 content={
+                     <div onClick={stop} onMouseDown={stop} onKeyDown={(e) => {
+                         e.stopPropagation();
+                         if (e.key === "Escape") setOpen(false);
+                     }}>
+                         <Flex gap={8} align="center">
+                             <InputNumber ref={inputRef}
+                                          autoFocus
+                                          size="small"
+                                          min={1}
+                                          max={Math.max(total, 1)}
+                                          precision={0}
+                                          value={value}
+                                          onChange={(v) => setValue(typeof v === "number" ? v : null)}
+                                          onPressEnter={() => void move()}
+                                          style={{width: 90}}/>
+                             <Button size="small" type="primary" loading={moving} disabled={!canMove} onClick={() => void move()}>
+                                 {t("list.moveToPositionOk")}
+                             </Button>
+                         </Flex>
+                         <div style={{fontSize: 12, opacity: 0.65, marginTop: 6, maxWidth: 260}}>
+                             {inGroup
+                                 ? t("list.moveGroupHint", {first: startAt, total})
+                                 : t("list.moveToPositionHint", {position, total})}
+                         </div>
+                     </div>
+                 }>
+            <Tooltip title={open ? undefined : t("list.installPositionClickHint", {position})} mouseEnterDelay={0.6}>
+                {badge}
+            </Tooltip>
+        </Popover>
+    );
+}
+
 export interface TreeViewItemProps {
     nodeData: any;
     onMenuClick: any;
     onCountLabelUpdate?: () => Promise<void>;
     folders?: FolderInfo[];
     onMoveToFolder?: (sourceKey: string, targetFolderKey: string) => void;
+    /** Move a mod to another install position (1 = top); only when its position is known */
+    onMoveToPosition?: (sourceKey: string, position: number) => unknown;
     itemOrder?: number;
+    /** Picked mods that move with this one (0 when it isn't one of several picked) */
+    groupSize?: number;
+    /** Install number of the first picked mod */
+    groupFirst?: number;
+    /** Click on a mod row (Ctrl/Shift-clicks select mods) */
+    onRowClick?: (nodeKey: string, e: React.MouseEvent) => void;
+    /** A folder: whether it is open */
+    expanded?: boolean;
+    /** A folder that is one of several ticked folders */
+    folderPick?: { count: number; exclude: string[] };
 }
 
+/**
+ * The tree calls titleRender for every visible row whenever it re-renders (each scroll
+ * step, selection, right-click). Rows only depend on their own props and the stores they
+ * subscribe to, so skip re-rendering when the props are unchanged.
+ */
+export const TreeViewItem = React.memo(TreeViewItemInner);
+
 /** 必须用 JSX `<TreeViewItem />` 渲染，勿当作普通函数调用，否则会违反 Hooks 规则（见 TreeView titleRender）。 */
-export function TreeViewItem({
+function TreeViewItemInner({
     nodeData,
     onMenuClick,
     onCountLabelUpdate,
     folders,
     onMoveToFolder,
+    onMoveToPosition,
     itemOrder,
+    groupSize,
+    groupFirst,
+    onRowClick,
+    expanded,
+    folderPick,
 }: TreeViewItemProps) {
     const {token} = useToken();
+    const describedMod = React.useMemo(() => ({
+        modId: nodeData.modId,
+        platformId: nodeData.platformId,
+        nameId: nodeData.nameId,
+        sourceType: nodeData.sourceType,
+        url: nodeData.url,
+    }), [nodeData.modId, nodeData.platformId, nodeData.nameId, nodeData.sourceType, nodeData.url]);
+    // Menu shows Link/Unlink depending on the mod's repository link
+    const repoLinkVersion = useSyncExternalStore(RepositoryUpdates.subscribe, RepositoryUpdates.version);
+    // Note / support entries follow the saved note and the accounts' lists
+    // (the versions go into the reads, or React Compiler would keep the first answer)
+    const notesVersion = useSyncExternalStore(ModNotes.subscribe, ModNotes.version);
+    const supportVersion = useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    const columnsView = ModListAppearance.get(useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version)).columns;
+
+    const hasNote = !!ModNotes.get(nodeData.modId, notesVersion);
+    const supportKind = nodeData.platformId
+        ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
+            : nodeData.sourceType === ModSourceType.Modio ? 'modio' as const : undefined
+        : undefined;
+    const nexusDomain = supportKind === 'nexus' ? nexusDomainOf(nodeData.url) : '';
+    const repoLink = RepositoryUpdates.linkForModAt(nodeData, repoLinkVersion);
+    // version / game version / status / tags (see ModInfoColumns)
+    const rowInfo = useRowInfo(nodeData, repoLink);
 
     const [enabled, setEnabled] = useState(() =>
         getPendingEnabled(nodeData.modId, nodeData.enabled)
@@ -1037,12 +1494,35 @@ export function TreeViewItem({
         }] : []),
         {label: t('Delete'), key: 'delete', icon: <DeleteOutlined />},
         {label: t('Copy Link'), key: 'copy_link', icon: <LinkOutlined />},
-        {label: t('Export'), key: 'export', icon: <ExportOutlined />}
+        {label: t('Export'), key: 'export', icon: <ExportOutlined />},
+        {type: 'divider' as const},
+        {label: t(hasNote ? 'notes.editMenu' : 'notes.addMenu'), key: 'note_edit', icon: <FileTextOutlined />},
+        ...(hasNote ? [{label: t('notes.removeMenu'), key: 'note_remove', icon: <DeleteOutlined />}] : []),
+        ...(supportMenuItems(supportKind, nexusDomain, nodeData.platformId, supportVersion) ?? []),
+        ...(nodeData.sourceType === ModSourceType.Local ? [
+            {type: 'divider' as const},
+            {
+                label: t((nodeData.localNoFound || nodeData.status?.isLocalNotFound) ? 'localMods.locateMissingMenu' : 'localMods.locateMenu'),
+                key: 'relocate',
+                icon: <FolderOpenOutlined />,
+            },
+            {
+                label: t(repoLink ? 'repoLink.changeMenu' : 'repoLink.menu'),
+                key: 'repo_link',
+                icon: <LinkOutlined />,
+            },
+            ...(repoLink
+                ? [{label: t('repoLink.unlinkMenu'), key: 'repo_unlink', icon: <DisconnectOutlined />}]
+                : []),
+        ] : []),
     ];
 
     if (nodeData.isLeaf) {
+        const hasProgress = nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM;
+        const hasVersions = hasProgress;
+        const tagTitles = rowInfo.tags;
         return (
-            <Dropdown trigger={['contextMenu']}
+            <ContextMenu
                       menu={{
                           items: contextMenus,
                           onClick: (e) => {
@@ -1050,80 +1530,81 @@ export function TreeViewItem({
                               if (e.key.startsWith('move_to_folder-')) {
                                   const targetFolderKey = e.key.replace('move_to_', '');
                                   onMoveToFolder?.(nodeData.key, targetFolderKey);
+                              } else if (e.key === 'note_edit') {
+                                  void editModNote(nodeData.modId, nodeData.title || nodeData.nameId || '');
+                              } else if (e.key === 'note_remove') {
+                                  void removeModNote(nodeData.modId, nodeData.title || nodeData.nameId || '');
+                              } else if (handleSupportMenu(e.key, nexusDomain, nodeData.platformId,
+                                  nodeData.title || nodeData.nameId || '', nodeData.usedVersion || undefined)) {
+                                  // sent to Nexus Mods / mod.io
                               } else {
                                   onMenuClick(e.key, nodeData.key);
                               }
                           }
                       }}>
-                <ModTreeViewProgressBackground nodeData={nodeData}>
+                <ModTreeViewProgressBackground nodeData={nodeData} onRowClick={onRowClick}>
   
-                <span style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        minWidth: "40px",
-                        height: "18px",
-                        borderRadius: "9px",
-                        backgroundColor: enabled ? token.colorPrimaryBg : token.colorBgTextHover,
-                        color: enabled ? token.colorPrimary : token.colorTextDisabled,
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        marginRight: "6px",
-                        padding: "0 5px",
-                        lineHeight: 1,
-                        fontVariantNumeric: "tabular-nums",
-                        flexShrink: 0,
-                    }}>
-                        {itemOrder ?? 1}
-                    </span>
+                <PositionBadge nodeKey={String(nodeData.key)}
+                               position={itemOrder ?? 1}
+                               enabled={enabled}
+                               onMove={onMoveToPosition}
+                               groupSize={groupSize}
+                               groupFirst={groupFirst}/>
 
                     <ModTreeViewSwitch nodeData={nodeData} onCountLabelUpdate={onCountLabelUpdate}/>
 
-                    {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
-                        <ModTreeViewVersionSelect nodeData={nodeData}/>
-                    }
+                    {/* columns view: the version picker sits in the Version column instead */}
+                    {!columnsView && hasVersions && <ModTreeViewVersionSelect nodeData={nodeData}/>}
 
                     {
                         (nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
-                        <ModTreeViewTitle nodeData={nodeData}/>
+                        <ModDescriptionHover mod={describedMod}>
+                            <ModTreeViewTitle nodeData={nodeData}/>
+                        </ModDescriptionHover>
                     }
 
                     {
                         //nodeData.sourceType === ModSourceType.Modio &&
-                        <ModTreeViewWarring nodeData={nodeData}/>
+                        <ModTreeViewWarring nodeData={nodeData}
+                                            onLocate={nodeData.sourceType === ModSourceType.Local
+                                                ? () => onMenuClick('relocate', nodeData.key)
+                                                : undefined}/>
                     }
 
                     {
                         nodeData.sourceType === ModSourceType.Local &&
-                        <ModTreeViewLocalTitle nodeData={nodeData} />
+                        <ModDescriptionHover mod={describedMod}>
+                            <ModTreeViewLocalTitle nodeData={nodeData} />
+                        </ModDescriptionHover>
                     }
 
-                    {/* 右侧区域：tags 靠右 */}
+                    {/* 右侧区域：tags 靠右 (columns view: tags and flags in fixed-width columns) */}
                     <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-                        {nodeData.tags.map(tagName => (
-                            <Tag key={tagName}>{tagName}</Tag>
-                        ))}
+                        {columnsView ? (
+                            <>
+                                {hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                                <span className="mod-col mod-col-version">
+                                    {hasVersions ? <ModTreeViewVersionSelect nodeData={nodeData}/> : <UploadedDate info={rowInfo}/>}
+                                </span>
+                                <span className="mod-col mod-col-game"><GameTag info={rowInfo}/></span>
+                                <span className="mod-col mod-col-status"><StatusTags info={rowInfo}/></span>
+                                <Tooltip title={tagTitles.length > 1 ? tagTitles.join(" · ") : undefined} mouseEnterDelay={0.5}>
+                                    <span className="mod-col mod-col-tags"><TagList info={rowInfo}/></span>
+                                </Tooltip>
+                            </>
+                        ) : (
+                            <>
+                                <TagList info={rowInfo}/>
+                                <StatusTags info={rowInfo} compact/>
+                                <GameTag info={rowInfo} compact/>
+                                {hasProgress && <ModTreeViewProgressPercent nodeData={nodeData}/>}
+                            </>
+                        )}
 
-                        {nodeData.required === true && (
-                            <Tag color="orange">RequiredByAll</Tag>)}
-
-                        {nodeData.versions.length > 0 && nodeData.versions[0] !== "1.40" && (
-                            <Tag color="red">{nodeData.versions[0]}</Tag>)}
-
-                        {nodeData.approval === "Verified" ? (
-                                <Tag color="blue" title={t("Verified")}>V</Tag>) :
-                            nodeData.approval === "Approved" ? (
-                                    <Tag color="green" title={t("Approved")}>A</Tag>) :
-                                nodeData.approval === "Sandbox" ? (
-                                        <Tag color="orange" title={t("Sandbox")}>S</Tag>) :
-                                    null}
-
-                        {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
-                            <ModTreeViewProgressPercent nodeData={nodeData}/>
-                        }
+                        <ModStatusIcons nodeData={nodeData}/>
                     </span>
                 </ModTreeViewProgressBackground>
-            </Dropdown>
+            </ContextMenu>
         );
     } else {
         return (
@@ -1132,6 +1613,9 @@ export function TreeViewItem({
                 onMenuClick={onMenuClick}
                 folders={folders}
                 onMoveToFolder={onMoveToFolder}
+                expanded={expanded}
+                folderPick={folderPick}
+                onRowClick={onRowClick}
             />
         );
     }

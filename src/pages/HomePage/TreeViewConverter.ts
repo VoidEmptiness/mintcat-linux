@@ -1,7 +1,10 @@
+import {GameVersions, newestGameVersion} from "@/services/ListDisplay";
+import {ModSourceType} from "@/models/mod/types";
 import {TreeProps} from "antd";
 import {ProfileTreeItem, ProfileTreeType} from "@/storage/db/Schema.ts";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
 import type {ProfileModData} from "@/storage/dao/ProfileDAO";
+import {activeFilters, type FilterEntry, type FilterProbe, matchesFilters, NO_PROBE, versionList} from "@/services/ModFilters";
 
 /**
  * TreeViewConverter
@@ -13,9 +16,25 @@ import type {ProfileModData} from "@/storage/dao/ProfileDAO";
  *
  * Note: 这是一个纯粹的数据转换器，不包含业务逻辑
  */
+export const FOLDER_COLOR_PREFIX = "path:";
+
 export class TreeViewConverter {
 
     public static filterList?: string[] = [];
+
+    /** Where the filters look up notes, marks, conflicts and Pak Hub posts (set by the search box) */
+    public static probe: FilterProbe = NO_PROBE;
+
+    /** Every mod of the profile in the last list built, filtered or not (the search box counts them) */
+    public static profileEntries: FilterEntry[] = [];
+
+    /** A search or filter is hiding part of the list */
+    public static isFiltering(): boolean {
+        return activeFilters(TreeViewConverter.filterList).length > 0;
+    }
+
+    /** Folder key ("folder-<id>") → folder color key, from the last list built */
+    public static folderColorKeys: Record<string, string> = {};
 
     public treeData?: TreeProps['treeData'] = []
     public expandedKeys?: TreeProps['expandedKeys'] = [];
@@ -25,6 +44,15 @@ export class TreeViewConverter {
     public constructor(modList: CompleteModData[], profileModList?: ProfileModData[]) {
         this.modList = modList;
         this.profileModList = profileModList;
+        // every list build (refresh, search, moves) knows the newest game version mod.io mods are tagged for
+        const tagged = modList
+            .filter(m => m.sourceType === ModSourceType.Modio)
+            .flatMap(m => versionList(m.version?.availableVersions));
+        const latest = newestGameVersion(tagged);
+        if (latest !== GameVersions.latest()) {
+            console.info(`[GameVersions] newest game version among mod.io mods: ${latest ?? 'none'} (${tagged.length} tags)`);
+        }
+        GameVersions.setLatest(latest);
     }
 
     // ====================================
@@ -32,44 +60,14 @@ export class TreeViewConverter {
     // ====================================
 
     /**
-     * 根据当前过滤器列表过滤 mod
+     * Whether a mod is shown with the search box's filters (see services/ModFilters): picks from
+     * the same group (e.g. Local + mod.io) widen the result; different groups and typed words
+     * narrow it, so "mod.io" + "On" + "unified" finds enabled mod.io mods whose name contains
+     * "unified". A typed word matches the name, the mod.io name id, a tag, the approval status
+     * or your note (case-insensitive).
      */
-    public static filter(modItem: CompleteModData, isEnabled: boolean): boolean {
-        const filterList = TreeViewConverter.filterList ?? [];
-        if (filterList.length === 0) {
-            return true;
-        }
-
-        for (let filter of filterList) {
-            if (filter === "All") {
-                return true;
-            }
-            // 处理来源类型筛选
-            if (filter.startsWith("source:")) {
-                const sourceType = filter.substring(7); // 去掉 "source:" 前缀
-                if (modItem.sourceType === sourceType) {
-                    return true;
-                }
-                continue;
-            }
-            if (filter.startsWith("enabled:")) {
-                const enabled = filter === "enabled:true";
-                if (isEnabled === enabled) {
-                    return true;
-                }
-                continue;
-            }
-            if (modItem.displayName?.toLocaleLowerCase().indexOf(filter.toLocaleLowerCase()) > -1) {
-                return true;
-            }
-            if (modItem.approvalStatus === filter) {
-                return true;
-            }
-            if (modItem.tags?.indexOf(filter) > -1) {
-                return true;
-            }
-        }
-        return false;
+    public static filter(modItem: CompleteModData, isEnabled: boolean, usedVersion?: string): boolean {
+        return matchesFilters(TreeViewConverter.filterList, {mod: modItem, enabled: isEnabled, usedVersion}, TreeViewConverter.probe);
     }
 
     // ====================================
@@ -80,6 +78,8 @@ export class TreeViewConverter {
      * 将 ProfileTreeItem root 转换为 AntD TreeView 格式
      */
     public convertToFromRoot(root: ProfileTreeItem): TreeProps['treeData'] {
+        TreeViewConverter.folderColorKeys = {};
+        TreeViewConverter.profileEntries = [];
         const treeRoot = {
             key: "root",
             isLeaf: false,
@@ -93,12 +93,12 @@ export class TreeViewConverter {
     /**
      * 递归构建 TreeView 节点
      */
-    private buildTreeNode(parent: any, root: ProfileTreeItem): void {
+    private buildTreeNode(parent: any, root: ProfileTreeItem, folderPath: string[] = []): void {
         for (const item of root.children) {
             if (item.type === ProfileTreeType.ITEM) {
-                this.buildModNode(parent, item);
+                this.buildModNode(parent, item, folderPath);
             } else if (item.type === ProfileTreeType.FOLDER) {
-                this.buildFolderNode(parent, item);
+                this.buildFolderNode(parent, item, folderPath);
             }
         }
     }
@@ -106,7 +106,7 @@ export class TreeViewConverter {
     /**
      * 构建 Mod 节点
      */
-    private buildModNode(parent: any, item: ProfileTreeItem): void {
+    private buildModNode(parent: any, item: ProfileTreeItem, folderPath: string[] = []): void {
         const modItem = this.modList?.find(m => m.modId === item.id);
         if (!modItem) {
             console.warn(`[TreeViewConverter] Mod item not found for id=${item.id}`);
@@ -116,8 +116,9 @@ export class TreeViewConverter {
         // Find profile-specific data (enabled status, used version)
         const profileMod = this.profileModList?.find(pm => pm.modId === modItem.modId);
         const isEnabled = profileMod?.isEnabled ?? item.enabled;
+        TreeViewConverter.profileEntries.push({mod: modItem, enabled: isEnabled, usedVersion: profileMod?.usedVersion || ""});
 
-        if (!TreeViewConverter.filter(modItem, isEnabled)) {
+        if (!TreeViewConverter.filter(modItem, isEnabled, profileMod?.usedVersion || "")) {
             return; // 不满足过滤条件，跳过
         }
 
@@ -138,7 +139,7 @@ export class TreeViewConverter {
             enabled: isEnabled,
             sourceType: modItem.sourceType,
             approval: modItem.approvalStatus,
-            versions: modItem.version?.availableVersions || [],
+            versions: versionList(modItem.version?.availableVersions),
             fileVersion: modItem.version?.currentVersion || "-",
             usedVersion: profileMod?.usedVersion || "",  // Use profile-specific used version
             downloadProgress: modItem.download?.downloadProgress || 100,
@@ -146,25 +147,34 @@ export class TreeViewConverter {
             onlineUpdateDate: modItem.status?.onlineUpdateDate || 0,
             onlineAvailable: modItem.status?.isOnlineAvailable ?? true,
             localNoFound: modItem.status?.isLocalNotFound ?? false,
+            // Color keys of the folders this mod is in, outermost first (for folder colors)
+            folderPath,
         });
     }
 
     /**
      * 构建文件夹节点
      */
-    private buildFolderNode(parent: any, item: ProfileTreeItem): void {
+    private buildFolderNode(parent: any, item: ProfileTreeItem, folderPath: string[] = []): void {
         const key = `folder-${item.id}`;
         this.expandedKeys.push(key);
+
+        // Folder colors are stored by the folder's name path ("Cosmetics/Custom Icons"): saving
+        // the list re-creates folders with new ids, so ids can't be used
+        const parentPath = folderPath.length ? folderPath[folderPath.length - 1].slice(FOLDER_COLOR_PREFIX.length) : "";
+        const colorKey = FOLDER_COLOR_PREFIX + (parentPath ? `${parentPath}/${item.name}` : item.name);
+        TreeViewConverter.folderColorKeys[key] = colorKey;
 
         const node = {
             key,
             title: item.name,
             isLeaf: false,
+            colorKey,
             children: [],
         }
 
         parent.children.push(node);
-        this.buildTreeNode(node, item); // 递归处理子节点
+        this.buildTreeNode(node, item, [...folderPath, colorKey]); // 递归处理子节点
     }
 
     // ====================================

@@ -1,9 +1,12 @@
 import React from "react";
 import {t} from "i18next";
-import {Button, Card, Flex, Input, List, message, Modal} from "antd";
-import {CheckOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusCircleOutlined} from "@ant-design/icons";
+import {Button, Card, Flex, Input, List, message, Modal, Tag, Tooltip, Typography} from "antd";
+import {CheckOutlined, CopyOutlined, DeleteOutlined, EditOutlined, PlusCircleOutlined, RollbackOutlined} from "@ant-design/icons";
 import {ProfileViewModel} from "@/dialogs/ProfileEditDialog/ProfileViewModel.ts";
 import { IoC } from "@/core/IoC.ts";
+import {MessageBox} from "@/components/MessageBox";
+import {confirmDelete, DeleteConfirm} from "@/services/DeleteConfirm";
+import {ProfileBackups, type ProfileBackup} from "@/services/ProfileCleanup";
 
 interface ProfileEditDialogStates {
     isModalOpen?: boolean;
@@ -11,9 +14,53 @@ interface ProfileEditDialogStates {
     editingKey?: string | null;
     editingValue?: string;
     profileList?: string[];
+    backups?: ProfileBackup[];
+    /** A backup is being restored or deleted (its buttons are off meanwhile) */
+    backupBusy?: string;
+    /** The profile in use */
+    activeProfile?: string;
+}
+
+/** The copy's name, with what copying does */
+function CopyNameForm({initial, onChange}: { initial: string; onChange: (value: string) => void }) {
+    const [value, setValue] = React.useState(initial);
+    return (
+        <Flex vertical gap={8} style={{marginTop: 4}}>
+            <Typography.Text>{t("profile.copyAsk")}</Typography.Text>
+            <Input value={value} maxLength={20} autoFocus autoComplete="off"
+                   addonBefore={t("profile.copyNameLabel")}
+                   onChange={(e) => {
+                       setValue(e.target.value);
+                       onChange(e.target.value);
+                   }}/>
+        </Flex>
+    );
 }
 
 type InputCallback = (name: string) => void;
+
+/**
+ * Enter in a name field: run the action (which asks to confirm) once the key is let go. Opened
+ * while Enter was still down, the confirmation got that same Enter and closed again at once.
+ */
+function onEnterReleased(action: () => void) {
+    return (e: React.KeyboardEvent) => {
+        e.preventDefault();
+        let done = false;
+        const run = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener('keyup', onUp, true);
+            action();
+        };
+        const onUp = (ev: KeyboardEvent) => {
+            if (ev.key === 'Enter') setTimeout(run, 0);
+        };
+        window.addEventListener('keyup', onUp, true);
+        // no key-up seen (e.g. focus moved): don't wait forever
+        setTimeout(run, 600);
+    };
+}
 
 class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
 
@@ -48,6 +95,7 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         this.setState({
             isModalOpen: true
         });
+        void this.fetchData();
     }
 
     private async handleOk() {
@@ -75,11 +123,23 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
 
 
     private async handleAdd() {
-        if (!await this.checkInput(this.state.newProfileName)) {
+        const name = (this.state.newProfileName ?? "").trim();
+        if (!await this.checkInput(name)) {
             return false;
         }
+        if (this.state.profileList?.includes(name)) {
+            message.error(t("Profile Already Exists"));
+            return false;
+        }
+        const ok = await MessageBox.confirm({
+            title: t("profile.addTitle", {name}),
+            content: t("profile.addAsk", {active: this.state.activeProfile ?? ""}),
+            okText: t("profile.addOk"),
+            cancelText: t("Cancel"),
+        });
+        if (!ok) return false;
         const vm = await IoC.get(ProfileViewModel);
-        await vm.addProfile(this.state.newProfileName);
+        await vm.addProfile(name);
 
         await this.fetchData();
         this.setState({
@@ -87,16 +147,95 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         });
     }
 
+    /** Asks first (unless "Ask before deleting" is off): delete it, or keep a backup and delete */
     private async handleDelete(key: string) {
         const vm = await IoC.get(ProfileViewModel);
-        await vm.removeProfile(key);
+        if ((this.state.profileList?.length ?? 0) <= 1) {
+            message.error(t("profile.mustKeepAtLeastOne"));
+            return;
+        }
+        let backup = false;
+        if (await DeleteConfirm.enabled()) {
+            const choice = await MessageBox.choose({
+                title: t("profile.deleteTitle", {name: key}),
+                content: t("profile.deleteAsk"),
+                width: 540,
+            }, [
+                {key: "backup", label: t("profile.deleteWithBackup"), primary: true},
+                {key: "delete", label: t("profile.deleteNoBackup"), danger: true, primary: true},
+            ], t("Cancel"));
+            if (!choice) return;
+            backup = choice === "backup";
+        }
+        await vm.removeProfile(key, backup);
         await this.fetchData();
     }
 
+    private async handleRestoreBackup(backup: ProfileBackup) {
+        if (this.state.backupBusy) return;
+        const ok = await MessageBox.confirm({
+            title: t("profile.restoreTitle", {name: backup.name}),
+            content: t("profile.restoreAsk", {name: backup.name, count: backup.mods.length}),
+            okText: t("profile.restoreOk"),
+            cancelText: t("Cancel"),
+            width: 520,
+        });
+        if (!ok) return;
+        this.setState({backupBusy: backup.id});
+        try {
+            const result = await ProfileBackups.restore(backup.id);
+            if (!result) {
+                message.error(t("profile.restoreFailed"));
+                return;
+            }
+            message.success(t("profile.restored", {name: result.name}));
+            if (result.missing > 0) message.warning(t("profile.restoredMissing", {count: result.missing}));
+        } catch (error) {
+            console.error('[profiles] restore failed', error);
+            message.error(t("profile.restoreFailed"));
+        } finally {
+            this.setState({backupBusy: undefined});
+            await this.fetchData();
+        }
+    }
+
+    private async handleDeleteBackup(backup: ProfileBackup) {
+        if (this.state.backupBusy) return;
+        const ok = await confirmDelete({
+            title: t("profile.backupDeleteTitle"),
+            content: t("profile.backupDeleteAsk", {name: backup.name}),
+        });
+        if (!ok) return;
+        this.setState({backupBusy: backup.id});
+        try {
+            await ProfileBackups.remove(backup.id);
+        } finally {
+            this.setState({backupBusy: undefined});
+            await this.fetchData();
+        }
+    }
+
     private async handleRename(key: string, newName: string) {
+        newName = newName.trim();
+        if (newName === key) {
+            // nothing changed
+            this.setState({editingKey: null, editingValue: ""});
+            return false;
+        }
         if (!await this.checkInput(newName)) {
             return false;
         }
+        if (this.state.profileList?.includes(newName)) {
+            message.error(t("Profile Already Exists"));
+            return false;
+        }
+        const ok = await MessageBox.confirm({
+            title: t("profile.renameTitle", {from: key, to: newName}),
+            content: t("profile.renameAsk"),
+            okText: t("profile.renameOk"),
+            cancelText: t("Cancel"),
+        });
+        if (!ok) return false;
 
         const vm = await IoC.get(ProfileViewModel);
         await vm.renameProfile(key, newName);
@@ -107,9 +246,35 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
         });
     }
 
+    /** A free name for a copy: "default copy", "default copy 2"… (within the 20 characters) */
+    private copyName(key: string): string {
+        const taken = new Set(this.state.profileList ?? []);
+        for (let n = 1; n < 100; n++) {
+            const suffix = n === 1 ? " copy" : ` copy ${n}`;
+            const name = key.slice(0, Math.max(1, 20 - suffix.length)) + suffix;
+            if (!taken.has(name)) return name;
+        }
+        return key.slice(0, 14) + "_" + Date.now().toString(36).slice(-5);
+    }
+
     private async handleCopy(key: string) {
+        let name = this.copyName(key);
+        const ok = await MessageBox.confirm({
+            title: t("profile.copyTitle", {name: key}),
+            content: <CopyNameForm initial={name} onChange={(value) => (name = value)}/>,
+            okText: t("profile.copyOk"),
+            cancelText: t("Cancel"),
+            width: 520,
+        });
+        if (!ok) return;
+        name = name.trim();
+        if (!await this.checkInput(name)) return;
+        if (this.state.profileList?.includes(name)) {
+            message.error(t("Profile Already Exists"));
+            return;
+        }
         const vm = await IoC.get(ProfileViewModel);
-        await vm.copyProfile(key, key + "_copy");
+        await vm.copyProfile(key, name);
         await this.fetchData();
         this.setState({
             newProfileName: ""
@@ -123,8 +288,12 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
     private async fetchData() {
         const vm = await IoC.get(ProfileViewModel);
         const profileList = await vm.getProfileList();
+        const backups = await ProfileBackups.listForActiveGame();
+        const activeProfile = await vm.getActiveProfileName().catch(() => undefined);
         this.setState({
-            profileList: profileList
+            profileList: profileList,
+            backups,
+            activeProfile,
         })
     }
 
@@ -159,14 +328,17 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                          value={this.state.newProfileName}
                                          placeholder={t("Input New Profile")}
                                          onChange={this.handleProfileInputChange}
-                                         onPressEnter={this.handleAdd}
+                                         onPressEnter={onEnterReleased(() => void this.handleAdd())}
                                          autoComplete={"off"}
                                   />
-                                  <Button type={"text"}
-                                          className="ml-8 mr-20"
-                                          onClick={this.handleAdd}
-                                          icon={<PlusCircleOutlined/>}
-                                  />
+                                  <Tooltip title={t("profile.addTip")}>
+                                      <Button type={"text"}
+                                              className="ml-8 mr-20"
+                                              onClick={this.handleAdd}
+                                              aria-label={t("profile.addTip")}
+                                              icon={<PlusCircleOutlined/>}
+                                      />
+                                  </Tooltip>
                               </Flex>
                           }
                           renderItem={
@@ -179,27 +351,42 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                                         size="small"
                                                         value={this.state.editingValue}
                                                         onChange={(e) => this.setState({editingValue: e.target.value})}
-                                                        onPressEnter={() => this.handleRename(item, this.state.editingValue)}
+                                                        onPressEnter={onEnterReleased(() => void this.handleRename(item, this.state.editingValue))}
                                                         className="w-200"
                                                         autoFocus
                                                         autoComplete={"off"}
                                                     />
                                                 ) : (
-                                                    <span>{item}</span>
+                                                    <span>
+                                                        {item}
+                                                        {item === this.state.activeProfile && (
+                                                            <Tooltip title={t("profile.inUseTip")}>
+                                                                <Tag color="processing" style={{marginInlineStart: 8}}>{t("profile.inUse")}</Tag>
+                                                            </Tooltip>
+                                                        )}
+                                                    </span>
                                                 )}
                                             </span>
-                                          <Button type={"text"}
-                                                  className="float-right"
-                                                  onClick={() => this.handleDelete(item)}
-                                                  icon={<DeleteOutlined/>}
-                                          />
-                                          <Button type={"text"}
-                                                  className="float-right"
-                                                  onClick={() => this.handleCopy(item)}
-                                                  icon={<CopyOutlined/>}
-                                          />
+                                          <Tooltip title={(this.state.profileList?.length ?? 0) <= 1 ? t("profile.mustKeepAtLeastOne") : t("profile.deleteTip")}>
+                                              <Button type={"text"}
+                                                      className="float-right"
+                                                      onClick={() => this.handleDelete(item)}
+                                                      aria-label={t("profile.deleteTip")}
+                                                      icon={<DeleteOutlined/>}
+                                              />
+                                          </Tooltip>
+                                          <Tooltip title={t("profile.copyTip")}>
+                                              <Button type={"text"}
+                                                      className="float-right"
+                                                      onClick={() => this.handleCopy(item)}
+                                                      aria-label={t("profile.copyTip")}
+                                                      icon={<CopyOutlined/>}
+                                              />
+                                          </Tooltip>
+                                          <Tooltip title={this.state.editingKey === item ? t("profile.renameSaveTip") : t("profile.renameTip")}>
                                           <Button
                                               type={"text"}
+                                              aria-label={t("profile.renameTip")}
                                               className="float-right"
                                               onClick={async () => {
                                                   if (this.state.editingKey === item) {
@@ -213,11 +400,40 @@ class ProfileEditDialog extends React.Component<any, ProfileEditDialogStates> {
                                               }}
                                               icon={this.state.editingKey === item ? <CheckOutlined/> : <EditOutlined/>}
                                           />
+                                          </Tooltip>
                                       </Flex>
                                   </List.Item>
                           }
                     />
                 </Card>
+                {(this.state.backups?.length ?? 0) > 0 &&
+                    <Card size={"small"} style={{marginTop: 8}}
+                          title={<Tooltip title={t("profile.backupsHelp")}>{t("profile.backupsTitle")}</Tooltip>}>
+                        <List size="small"
+                              dataSource={this.state.backups}
+                              renderItem={backup => (
+                                  <List.Item actions={[
+                                      <Tooltip key="restore" title={t("profile.restoreBackup")}>
+                                          <Button type="text" size="small" icon={<RollbackOutlined/>}
+                                                  disabled={!!this.state.backupBusy}
+                                                  loading={this.state.backupBusy === backup.id}
+                                                  onClick={() => void this.handleRestoreBackup(backup)}/>
+                                      </Tooltip>,
+                                      <Tooltip key="delete" title={t("profile.backupDeleteTip")}>
+                                          <Button type="text" size="small" danger icon={<DeleteOutlined/>}
+                                                  disabled={!!this.state.backupBusy}
+                                                  onClick={() => void this.handleDeleteBackup(backup)}/>
+                                      </Tooltip>,
+                                  ]}>
+                                      <Flex vertical>
+                                          <span>{backup.name}</span>
+                                          <Typography.Text type="secondary" style={{fontSize: 12}}>
+                                              {t("profile.backupInfo", {count: backup.mods.length, when: new Date(backup.time).toLocaleString()})}
+                                          </Typography.Text>
+                                      </Flex>
+                                  </List.Item>
+                              )}/>
+                    </Card>}
             </Modal>
         );
     }

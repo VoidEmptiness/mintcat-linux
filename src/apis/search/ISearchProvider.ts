@@ -1,4 +1,4 @@
-import {SearchParams, SearchResult, SearchProviderStatus, SearchSource} from './types';
+import {SearchParams, SearchResult, SearchProviderStatus, SearchSourceKey} from './types';
 
 /**
  * 搜索提供者接口
@@ -8,7 +8,7 @@ export interface ISearchProvider {
     /**
      * 获取搜索源标识
      */
-    readonly source: SearchSource;
+    readonly source: SearchSourceKey;
     
     /**
      * 获取搜索源显示名称
@@ -43,7 +43,7 @@ export interface ISearchProvider {
  */
 export class SearchProviderRegistry {
     private static instance: SearchProviderRegistry;
-    private providers: Map<SearchSource, ISearchProvider> = new Map();
+    private providers: Map<SearchSourceKey, ISearchProvider> = new Map();
     
     private constructor() {}
     
@@ -67,14 +67,14 @@ export class SearchProviderRegistry {
     /**
      * 注销搜索提供者
      */
-    public unregister(source: SearchSource): void {
+    public unregister(source: SearchSourceKey): void {
         this.providers.delete(source);
     }
     
     /**
      * 获取指定的搜索提供者
      */
-    public get(source: SearchSource): ISearchProvider | undefined {
+    public get(source: SearchSourceKey): ISearchProvider | undefined {
         return this.providers.get(source);
     }
     
@@ -88,14 +88,14 @@ export class SearchProviderRegistry {
     /**
      * 获取所有可用的搜索源
      */
-    public getSources(): SearchSource[] {
+    public getSources(): SearchSourceKey[] {
         return Array.from(this.providers.keys());
     }
     
     /**
      * 检查搜索源是否已注册
      */
-    public has(source: SearchSource): boolean {
+    public has(source: SearchSourceKey): boolean {
         return this.providers.has(source);
     }
 }

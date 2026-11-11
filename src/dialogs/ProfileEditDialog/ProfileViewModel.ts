@@ -4,6 +4,9 @@ import {ProfileTreeItem} from "@/storage/db/Schema.ts";
 import type {ProfileData} from "@/storage/dao/ProfileDAO.ts";
 import { ProfileService } from "@/services/ProfileService";
 import { IoC } from "@/core/IoC";
+import {logActivity} from "@/services/ActivityLog";
+import {cleanupDeletedProfile, ProfileBackups} from "@/services/ProfileCleanup";
+import {StorageAPI} from "@/storage";
 
 /**
  * ProfileViewModel manages profile-level operations
@@ -67,6 +70,7 @@ export class ProfileViewModel {
     public async setActiveProfile(profileName: string): Promise<void> {
         const profileService = await this.getProfileService();
         await profileService.setActiveProfile(profileName);
+        await logActivity('info', t("log.profile.switched", {name: profileName}), undefined, 'profile');
     }
 
     public async getActiveProfileLastUpdate(): Promise<number> {
@@ -122,10 +126,11 @@ export class ProfileViewModel {
             userId: activeProfile.userId,
             isActive: isFirstProfile
         });
-
+        await logActivity('info', t("log.profile.created", {name}), undefined, 'profile');
     }
 
-    public async removeProfile(name: string): Promise<void> {
+    /** @param backup keep a backup of it first (restorable from the profile editor) */
+    public async removeProfile(name: string, backup = false): Promise<void> {
         const profileService = await this.getProfileService();
         const profileList = await profileService.getProfileList();
 
@@ -144,7 +149,23 @@ export class ProfileViewModel {
         const activeProfile = await profileService.getActiveProfileData();
         const wasActive = activeProfile.name === name;
 
-        await profileService.deleteProfile(targetProfile.id);
+        const made = backup ? await ProfileBackups.create(targetProfile.id) : null;
+        if (backup && !made) {
+            message.error(t("profile.backupFailed"));
+            return;
+        }
+        // its mods, for the downloads nothing else uses any more
+        const modIds = (await (await StorageAPI.getProfiles()).getProfileMods(targetProfile.id)).map(m => m.modId);
+        if (!(await profileService.deleteProfile(targetProfile.id))) {
+            // still there: keep its settings, and the backup made of it isn't needed
+            if (made) await ProfileBackups.discard(made.id);
+            message.error(t("profile.deleteFailed"));
+            await logActivity('error', t("profile.deleteFailed"), name, 'profile');
+            return;
+        }
+        await logActivity('info', t("log.profile.deleted", {name}), undefined, 'profile');
+        await cleanupDeletedProfile({id: targetProfile.id, name: targetProfile.displayName || name, gameId: targetProfile.gameId}, modIds)
+            .catch(e => console.warn('[profiles] cleanup after delete failed', e));
 
         if (wasActive) {
             const remainingProfiles = profileList.filter(p => p !== name);
@@ -164,11 +185,14 @@ export class ProfileViewModel {
             return;
         }
 
-        const profileData = await profileService.getActiveProfileData();
-        if (profileData.name === oldName) {
-            await profileService.renameProfile(profileData.id!, newName);
+        // any profile, not only the one in use (renaming another one used to do nothing)
+        const profileData = await profileService.getProfileByName(oldName);
+        if (!profileData?.id) {
+            message.error(t("Profile not found"));
+            return;
         }
-
+        await profileService.renameProfile(profileData.id, newName);
+        await logActivity('info', t("log.profile.renamed", {from: oldName, to: newName}), undefined, 'profile');
     }
 
     public async copyProfile(sourceName: string, newName: string): Promise<void> {
@@ -202,6 +226,7 @@ export class ProfileViewModel {
 
         const treeService = profileService.getTreeService();
         await treeService.duplicateProfileTree(sourceProfile.id, newProfile.id);
+        await logActivity('info', t("log.profile.copied", {from: sourceName, to: newName}), undefined, 'profile');
 
     }
 

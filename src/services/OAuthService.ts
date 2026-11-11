@@ -203,7 +203,7 @@ export class OAuthService {
 
         // 获取当前活跃用户
         const activeUser = await userDAO.getActiveUser();
-        console.log('[OAuthService] Active user:', activeUser);
+        console.log('[OAuthService] Active user:', activeUser?.id);
         
         if (!activeUser) {
             throw new Error('No active user found. Please ensure the application is properly initialized.');
@@ -212,7 +212,7 @@ export class OAuthService {
         // 统一使用通用方法存储 token
         const result = await oauthDAO.upsertOAuth(activeUser.id, platform, token);
         
-        console.log('[OAuthService] Token storage result:', result);
+        console.log('[OAuthService] Token stored:', !!result);
         
         if (!result) {
             throw new Error(`Failed to store OAuth token for platform: ${platform}`);

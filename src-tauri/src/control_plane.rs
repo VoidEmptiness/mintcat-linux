@@ -21,6 +21,18 @@ pub async fn control_plane_invoke(
             crate::webview_host::open_managed_webview(app, payload).await?;
             Ok(serde_json::json!({ "ok": true }))
         }
+        "clear_site_cookies" => {
+            let domains: Vec<String> = request
+                .payload
+                .get("domains")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|error| format!("invalid clear_site_cookies payload: {error}"))?
+                .unwrap_or_default();
+            let deleted = crate::webview_host::clear_site_cookies(app, domains).await?;
+            Ok(serde_json::json!({ "deleted": deleted }))
+        }
         command => Err(format!("unknown control plane command: {command}")),
     }
 }

@@ -32,6 +32,12 @@ export interface ProbeResult {
 
 export interface ApplyMintcatApiRoutingOptions {
     cachedProbeTimeoutMs?: number;
+    /**
+     * false: use the saved release origin right away without testing it first (the background
+     * re-probe replaces it if something faster answers). Startup uses this so the list doesn't
+     * wait up to 1.5 s for the network.
+     */
+    probeCached?: boolean;
     refreshInBackground?: boolean;
     logPrefix?: string;
 }
@@ -136,6 +142,11 @@ export async function applyMintcatApiRoutingFromSettings(
     }
 
     const autoCached = (await settings.getValue(NETWORK_SERVER_AUTO_ORIGIN_KEY))?.trim() ?? '';
+    if (autoCached && options.probeCached === false) {
+        setMintcatUpdateManifestResolvedUrl(autoCached);
+        refreshAutoRoutingIfNeeded(options.refreshInBackground);
+        return autoCached;
+    }
     if (autoCached) {
         const probe = await probeUpdateManifest(autoCached, options.cachedProbeTimeoutMs ?? 1500);
         if (probe.ok) {

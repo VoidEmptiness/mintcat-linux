@@ -1,4 +1,11 @@
 import {t} from "i18next";
+import {openMintImport} from "@/dialogs/MintImportDialog";
+import {ModDescriptions} from "@/services/ModDescriptions";
+import {COLOR_PRESETS, ModListAppearance} from "@/services/ModListAppearance";
+import {TitleBarLook} from "@/services/TitleBarLook";
+import {USAGE_STATS_DEFAULT, UsageStats} from "@/services/UsageStats";
+import {useAdvancedShown} from "@/pages/SettingPage/AdvancedSettingsCard";
+import {CloudDownloadOutlined, DisconnectOutlined, LinkOutlined, ThunderboltOutlined, UserOutlined} from "@ant-design/icons";
 import React from "react";
 import {openPath} from "@tauri-apps/plugin-opener";
 import {open} from "@tauri-apps/plugin-dialog";
@@ -7,7 +14,9 @@ import {IntegrateApi} from "@/apis/IntegrateApi.ts";
 import {CacheApi} from "@/apis/CacheApi.ts";
 import {DEFAULT_RELEASE_CHANNEL, RELEASE_CHANNELS, type ReleaseChannel} from "@/apis/mintcat";
 import {StorageAPI} from "@/storage";
-import {Button, Card, Flex, Form, Input, message, Modal, Select, Switch} from "antd";
+import {Button, Card, ColorPicker, Flex, Form, Input, InputNumber, message, Modal, Select, Switch, Typography} from "antd";
+import {AppLogs, DEFAULT_KEEP, MAX_KEEP} from "@/services/AppLogs";
+import {appLogDir} from "@tauri-apps/api/path";
 import {ExclamationCircleFilled} from "@ant-design/icons";
 import {FolderAddOutlined} from "@ant-design/icons";
 import {ClipboardApi} from "@/apis/ClipboardApi.ts";
@@ -20,6 +29,8 @@ import {
     UE4SS_SETTING_ENABLED,
     type Ue4ssSetting,
 } from "@/utils/Ue4ssSetting.ts";
+import {confirmDelete, DeleteConfirm} from "@/services/DeleteConfirm";
+import {MoveConfirm} from "@/services/MoveConfirm";
 
 
 
@@ -43,6 +54,20 @@ export function MintCatSettings() {
     const [cacheDirectory, setCacheDirectory] = React.useState<string>("");
     const [ue4ss, setUe4ss] = React.useState<Ue4ssSetting>(UE4SS_SETTING_ENABLED);
     const [releaseChannel, setReleaseChannel] = React.useState<ReleaseChannel>(DEFAULT_RELEASE_CHANNEL);
+    const descriptionHover = React.useSyncExternalStore(ModDescriptions.subscribe, ModDescriptions.isEnabled);
+    const askBeforeDeleting = React.useSyncExternalStore(DeleteConfirm.subscribe, DeleteConfirm.isEnabled);
+    const askBeforeMoving = React.useSyncExternalStore(MoveConfirm.subscribe, MoveConfirm.isEnabled);
+    const lookVersion = React.useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version);
+    const advanced = useAdvancedShown();
+    const look = ModListAppearance.get(lookVersion);
+    const titleLookVersion = React.useSyncExternalStore(TitleBarLook.subscribe, TitleBarLook.version);
+    const [usageStats, setUsageStats] = React.useState(USAGE_STATS_DEFAULT);
+    React.useEffect(() => {
+        void UsageStats.isEnabled().then(setUsageStats);
+    }, []);
+    React.useEffect(() => {
+        void TitleBarLook.init();
+    }, []);
     const [clipboardMonitor, setClipboardMonitor] = React.useState<boolean>(true);
     const [compressModPak, setCompressModPak] = React.useState<boolean>(false);
 
@@ -155,21 +180,17 @@ export function MintCatSettings() {
     }
 
     const onClearCacheClick = async () => {
-        Modal.confirm({
+        const ok = await confirmDelete({
             title: t("Clear Current Cache"),
-            icon: <ExclamationCircleFilled />,
             content: t("Clear Cache Warning"),
             okText: t("Clean"),
-            okType: 'danger',
-            cancelText: t("Cancel"),
-            onOk: async () => {
-                if (await CacheApi.cleanCurrentCache()) {
-                    message.success(t("Clean Cache Success"));
-                } else {
-                    message.error(t("Clean Cache Failed"));
-                }
-            }
         });
+        if (!ok) return;
+        if (await CacheApi.cleanCurrentCache()) {
+            message.success(t("Clean Cache Success"));
+        } else {
+            message.error(t("Clean Cache Failed"));
+        }
     }
 
     const onImportConfigClick = async () => {
@@ -224,7 +245,21 @@ export function MintCatSettings() {
                                     onChange={onThemeChange}/>
                         </Flex>
                     </Form.Item>
-                    <Form.Item label={t("Config Directory")}>
+                    <Form.Item label={t("iconPicker.settingLabel")} tooltip={t("help.titleBarIcons")}>
+                        <Flex gap={16} align="center" wrap>
+                            <Button icon={<img src={TitleBarLook.src("logo", titleLookVersion) ?? "icon.ico"} alt="" width={18} height={18} style={{borderRadius: 4, objectFit: "contain"}}/>}
+                                    onClick={() => TitleBarLook.openPicker("logo")}>
+                                {t("iconPicker.appIcon")}
+                            </Button>
+                            <Button icon={TitleBarLook.src("avatar", titleLookVersion)
+                                        ? <img src={TitleBarLook.src("avatar", titleLookVersion)} alt="" width={18} height={18} style={{borderRadius: "50%", objectFit: "cover"}}/>
+                                        : <UserOutlined/>}
+                                    onClick={() => TitleBarLook.openPicker("avatar")}>
+                                {t("iconPicker.profilePicture")}
+                            </Button>
+                        </Flex>
+                    </Form.Item>
+                    <Form.Item label={t("Config Directory")} tooltip={t("help.configDir")}>
                         <Flex>
                             <Input value={configDirectory}
                                    disabled/>
@@ -235,14 +270,21 @@ export function MintCatSettings() {
                             </Button>
                         </Flex>
                     </Form.Item>
-                    <Form.Item label={t("Import Config")}>
+                    <Form.Item label={t("Import Config")} tooltip={t("help.importConfig")}>
                         <Button type="dashed"
                                 {...ButtonLayout}
                                 onClick={onImportConfigClick}>
                             {t("Open")}
                         </Button>
                     </Form.Item>
-                    <Form.Item label={t("Cache Directory")}>
+                    <Form.Item label={t("mintImport.settingsLabel")} tooltip={t("help.mintImport")}>
+                        <Button type="dashed"
+                                {...ButtonLayout}
+                                onClick={() => openMintImport()}>
+                            {t("mintImport.choose")}
+                        </Button>
+                    </Form.Item>
+                    <Form.Item label={t("Cache Directory")} tooltip={t("help.cacheDir")}>
                         <Flex>
                             <Search value={cacheDirectory}
                                     enterButton={<FolderAddOutlined/>}
@@ -255,7 +297,7 @@ export function MintCatSettings() {
                             </Button>
                         </Flex>
                     </Form.Item>
-                    <Form.Item label={t("Clear Current Cache")}>
+                    <Form.Item label={t("Clear Current Cache")} tooltip={t("help.clearCache")}>
                         <Button type="dashed"
                                 danger
                                 {...ButtonLayout}
@@ -263,10 +305,81 @@ export function MintCatSettings() {
                             {t("Clean")}
                         </Button>
                     </Form.Item>
-                    <Form.Item label={t("Clipboard Monitor")}>
+                    <Form.Item label={t("Clipboard Monitor")} tooltip={t("help.clipboard")}>
                         <Switch checked={clipboardMonitor}
                                 onChange={onClipboardMonitorChange}
                         />
+                    </Form.Item>
+                    <Form.Item label={t("logs.keepLabel")} tooltip={t("help.logsKeep")}>
+                        <LogsKeptSetting/>
+                    </Form.Item>
+                    <Form.Item label={t("usageStats.label")} tooltip={t("help.usageStats")}>
+                        <Flex gap={8} align="center">
+                            <Switch checked={usageStats}
+                                    onChange={(checked) => {
+                                        setUsageStats(checked);
+                                        void UsageStats.setEnabled(checked);
+                                    }}/>
+                            <Typography.Text type="secondary" style={{fontSize: 12}}>{t("usageStats.restart")}</Typography.Text>
+                        </Flex>
+                    </Form.Item>
+                </Form>
+            </Card>
+            <Card title={t("modList.settingsTitle")}
+                  style={{marginBottom: "10px"}}
+            >
+                <Form {...SettingLayout}>
+                    <Form.Item label={t("deleteConfirm.setting")} tooltip={t("help.confirmDelete")}>
+                        <Switch checked={askBeforeDeleting}
+                                onChange={(checked) => void DeleteConfirm.setEnabled(checked)}/>
+                    </Form.Item>
+                    <Form.Item label={t("moveConfirm.setting")} tooltip={t("help.confirmMove")}>
+                        <Switch checked={askBeforeMoving}
+                                onChange={(checked) => void MoveConfirm.setEnabled(checked)}/>
+                    </Form.Item>
+                    <Form.Item label={t("modDescription.setting")} tooltip={t("help.descriptionHover")}>
+                        <Switch checked={descriptionHover}
+                                onChange={(checked) => {
+                                    void ModDescriptions.setEnabled(checked);
+                                }}
+                        />
+                    </Form.Item>
+                    <Form.Item label={t("modList.autoLinkColor")} tooltip={t("help.autoLinkColor")}>
+                        <Flex gap={12} align="center">
+                            <Switch checked={look.autoLinkColorEnabled}
+                                    onChange={(checked) => void ModListAppearance.update({autoLinkColorEnabled: checked})}/>
+                            <ColorPicker value={look.autoLinkColor}
+                                         disabled={!look.autoLinkColorEnabled}
+                                         disabledAlpha
+                                         showText
+                                         presets={[{label: t("modList.presets"), colors: COLOR_PRESETS}]}
+                                         onChangeComplete={(c) => void ModListAppearance.update({autoLinkColor: c.toHexString()})}/>
+                        </Flex>
+                    </Form.Item>
+                    <Form.Item label={t("modList.linkIcons")} tooltip={t("help.linkIcons")}>
+                        <Flex gap={12} align="center" wrap>
+                            <Switch checked={look.linkIcons}
+                                    onChange={(checked) => void ModListAppearance.update({linkIcons: checked})}/>
+                            <Typography.Text type="secondary" style={{fontSize: 12}}>
+                                <ThunderboltOutlined/> {t("modList.iconAuto")}
+                                &nbsp;&nbsp;<CloudDownloadOutlined/> {t("modList.iconAdded")}
+                                &nbsp;&nbsp;<LinkOutlined/> {t("modList.iconManual")}
+                                &nbsp;&nbsp;<DisconnectOutlined/> {t("modList.iconNone")}
+                            </Typography.Text>
+                        </Flex>
+                    </Form.Item>
+                    <Form.Item label={t("modList.columnsView")} tooltip={t("help.columnsView")}>
+                        <Switch checked={look.columns}
+                                onChange={(checked) => void ModListAppearance.update({columns: checked})}/>
+                    </Form.Item>
+                    <Form.Item label={t("modList.folderColors")} tooltip={t("help.folderColors")}>
+                        <Flex gap={12} align="center">
+                            <Typography.Text type="secondary">{t("modList.folderColorsHint")}</Typography.Text>
+                            {Object.keys(look.folderColors).length > 0 &&
+                                <Button size="small" onClick={() => void ModListAppearance.clearFolderColors()}>
+                                    {t("modList.clearFolderColors")}
+                                </Button>}
+                        </Flex>
                     </Form.Item>
                 </Form>
             </Card>
@@ -274,15 +387,16 @@ export function MintCatSettings() {
                   style={{marginBottom: "10px"}}
             >
                 <Form {...SettingLayout}>
-                    <Form.Item label={t("Release channel")}>
+                    {advanced &&
+                    <Form.Item label={t("Release channel")} tooltip={t("help.releaseChannel")}>
                         <Flex>
                             <Select value={releaseChannel}
                                     options={releaseChannelOptions}
                                     onChange={onReleaseChannelChange}
                             />
                         </Flex>
-                    </Form.Item>
-                    <Form.Item label={t("UE4SS")}>
+                    </Form.Item>}
+                    <Form.Item label={t("UE4SS")} tooltip={t("help.ue4ss")}>
                         <Select<Ue4ssSetting> onChange={onUe4ssChange}
                                 value={ue4ss}
                                 options={[
@@ -296,20 +410,65 @@ export function MintCatSettings() {
                                     },
                                 ]}/>
                     </Form.Item>
-                    <Form.Item label={t("Compress Mod Pak")}>
+                    {advanced &&
+                    <Form.Item label={t("Compress Mod Pak")} tooltip={t("help.compress")}>
                         <Switch checked={compressModPak}
                                 onChange={onCompressModPakChange}
                         />
-                    </Form.Item>
-                    <Form.Item label={t("Dev Tools")}>
+                    </Form.Item>}
+                    {advanced &&
+                    <Form.Item label={t("Dev Tools")} tooltip={t("help.devTools")}>
                         <Button type="dashed"
                                 {...ButtonLayout}
                                 onClick={onDevToolsClick}>
                             {t("Open Dev Tools")}
                         </Button>
-                    </Form.Item>
+                    </Form.Item>}
                 </Form>
             </Card>
         </>
     )
+}
+
+/** How many launches' logs are kept; the oldest are deleted as new launches start */
+function LogsKeptSetting() {
+    const [keep, setKeep] = React.useState<number>(DEFAULT_KEEP);
+    const [stats, setStats] = React.useState<{ launches: number; bytes: number } | null>(null);
+    const refresh = React.useCallback(async () => {
+        try {
+            const sessions = await AppLogs.sessions();
+            setStats({launches: sessions.length, bytes: sessions.reduce((n, s) => n + s.files.reduce((m, f) => m + f.size, 0), 0)});
+        } catch {
+            setStats(null);
+        }
+    }, []);
+    React.useEffect(() => {
+        void AppLogs.keepCount().then(setKeep);
+        void refresh();
+    }, [refresh]);
+    const save = async (value: number | null) => {
+        if (value == null) return;
+        try {
+            const result = await AppLogs.setKeepCount(value);
+            setKeep(result);
+            await refresh();
+        } catch (error) {
+            message.error(String(error));
+        }
+    };
+    const mb = stats ? (stats.bytes / 1024 / 1024).toFixed(stats.bytes < 10 * 1024 * 1024 ? 1 : 0) : "";
+    return (
+        <Flex gap={8} align="center" wrap>
+            <InputNumber min={1} max={MAX_KEEP} value={keep} style={{width: 90}}
+                         onChange={(value) => value != null && setKeep(value)}
+                         onBlur={() => void save(keep)}
+                         onPressEnter={() => void save(keep)}/>
+            <Typography.Text type="secondary" style={{fontSize: 12}}>
+                {t("logs.launches", {count: keep})}{stats ? ` · ${t("logs.now", {count: stats.launches, size: mb})}` : ""}
+            </Typography.Text>
+            <Button size="small" onClick={() => void appLogDir().then(openPath).catch((e) => message.error(String(e)))}>
+                {t("log.openFolder")}
+            </Button>
+        </Flex>
+    );
 }

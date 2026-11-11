@@ -6,7 +6,8 @@ import { ConfigMigrationV3 } from "@/storage/migration/ConfigMigrationV3";
 import { ConfigMigrationV4 } from "@/storage/migration/ConfigMigrationV4";
 import type { ConfigDataType } from "@/storage/DataType";
 import { getDb } from "@/storage/db/Client";
-import { mods, modVersions, modDownloads, modStatus, profiles, profileFolders, profileMods, oauths } from "@/storage/db/Schema";
+import { profiles, profileFolders, profileMods } from "@/storage/db/Schema";
+import { eq, inArray, ne } from "drizzle-orm";
 
 export class DialogConfigService {
     public async getExistingConfigList() {
@@ -26,6 +27,8 @@ export class DialogConfigService {
             return false;
         
         let success = false;
+        // Remember what existed before, so a failed import only undoes its own additions
+        const before = await this.snapshotProfiles();
         
         try {
             if (config.version === "0.4") {
@@ -45,53 +48,46 @@ export class DialogConfigService {
             success = false;
         }
         
-        // 如果导入失败，清理部分写入的数据，避免数据不一致
-        if (!success) {
+        // 如果导入失败，清理本次导入新建的配置方案，避免出现不完整的分组
+        if (!success && before) {
             console.log('[DialogConfigService] 导入失败，清理部分数据...');
-            await this.cleanupPartialData();
+            await this.cleanupPartialData(before);
         }
         
         return success;
     }
 
-    /**
-     * 清理导入失败后的部分数据
-     * 删除 profile 相关数据和 mod 相关数据，避免出现空的分组
-     */
-    private async cleanupPartialData(): Promise<void> {
+    private async snapshotProfiles(): Promise<{ ids: number[]; activeId?: number } | null> {
         try {
             const db = await getDb();
-            console.log('[DialogConfigService] 开始清理部分导入的数据...');
+            const rows = await db.select({id: profiles.id, isActive: profiles.isActive}).from(profiles);
+            return {ids: rows.map(r => r.id), activeId: rows.find(r => r.isActive)?.id};
+        } catch (error) {
+            console.error('[DialogConfigService] could not read profiles before import:', error);
+            return null;
+        }
+    }
 
-            // 按外键依赖顺序删除：先删除依赖表，再删除被依赖表
-            // 1. 删除 profile 相关数据
-            await db.delete(profileMods);
-            console.log('[DialogConfigService] 已清空 profileMods 表');
-
-            await db.delete(profileFolders);
-            console.log('[DialogConfigService] 已清空 profileFolders 表');
-
-            await db.delete(profiles);
-            console.log('[DialogConfigService] 已清空 profiles 表');
-
-            // 2. 删除 mod 相关数据
-            await db.delete(modStatus);
-            console.log('[DialogConfigService] 已清空 modStatus 表');
-
-            await db.delete(modDownloads);
-            console.log('[DialogConfigService] 已清空 modDownloads 表');
-
-            await db.delete(modVersions);
-            console.log('[DialogConfigService] 已清空 modVersions 表');
-
-            await db.delete(mods);
-            console.log('[DialogConfigService] 已清空 mods 表');
-
-            // 3. 删除 oauth 数据
-            await db.delete(oauths);
-            console.log('[DialogConfigService] 已清空 oauths 表');
-
-            console.log('[DialogConfigService] 部分数据清理完成');
+    /**
+     * After a failed import, remove only the profiles it created (with their folders and mod
+     * links) and switch back to the profile that was active before. Profiles, mods and logins
+     * that existed before the import are left alone.
+     */
+    private async cleanupPartialData(before: { ids: number[]; activeId?: number }): Promise<void> {
+        try {
+            const db = await getDb();
+            const now = await db.select({id: profiles.id}).from(profiles);
+            const created = now.map(r => r.id).filter(id => !before.ids.includes(id));
+            if (created.length > 0) {
+                await db.delete(profileMods).where(inArray(profileMods.profileId, created));
+                await db.delete(profileFolders).where(inArray(profileFolders.profileId, created));
+                await db.delete(profiles).where(inArray(profiles.id, created));
+                console.log(`[DialogConfigService] removed ${created.length} profile(s) from the failed import`);
+            }
+            if (before.activeId != null) {
+                await db.update(profiles).set({isActive: false}).where(ne(profiles.id, before.activeId));
+                await db.update(profiles).set({isActive: true}).where(eq(profiles.id, before.activeId));
+            }
         } catch (error) {
             console.error('[DialogConfigService] 清理部分数据失败:', error);
         }

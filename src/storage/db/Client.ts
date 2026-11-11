@@ -74,3 +74,24 @@ export async function getDb() {
 
     return drizzle(callback);
 }
+
+/**
+ * Write a consistent copy of the live database to `dest` (which must not exist yet). A plain
+ * file copy would miss recent changes: the database runs in WAL mode, so they can still be in
+ * mintcat.sqlite-wal. The copy is set to WAL mode too, like MINTCAT's own database.
+ */
+export async function snapshotDatabase(dest: string): Promise<void> {
+    const db = await initDb();
+    await db.execute("VACUUM INTO $1", [dest]);
+    try {
+        const copy = await Database.load(`sqlite:${dest}`);
+        try {
+            await copy.select("PRAGMA journal_mode=WAL");
+        } finally {
+            // only this database: close() without a name closes MINTCAT's own pool too
+            await copy.close(copy.path);
+        }
+    } catch (e) {
+        console.warn("[db] could not set WAL mode on the snapshot (fixed at startup after a restore)", e);
+    }
+}

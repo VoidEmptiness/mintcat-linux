@@ -181,6 +181,21 @@ export class ModcatApi {
     /**
      * 通过链接获取 Mod 信息
      */
+    /** The name of the mod a ModCat link points to, without messages (shown in the Add Mod window) */
+    public static async lookupModLink(url: string): Promise<
+        { status: 'found'; name: string } | { status: 'notFound' } | { status: 'invalid' } | { status: 'error'; message: string }> {
+        const modId = ModcatApi.parseModLinks(url);
+        if (!modId) return {status: 'invalid'};
+        try {
+            const result = await ModcatApi.postRequest<ModcatModEntity>("/api/Mod/ModDetail", {ModId: modId});
+            if (!ModcatApi.isSuccess(result)) return {status: 'error', message: result.ResultMsg || 'ModCat'};
+            const name = result.ResultData?.Name?.trim();
+            return name ? {status: 'found', name} : {status: 'notFound'};
+        } catch (error) {
+            return {status: 'error', message: error instanceof Error ? error.message : String(error)};
+        }
+    }
+
     public static async getModInfoByLink(url: string): Promise<ModcatModEntity | null> {
         const modId = ModcatApi.parseModLinks(url);
         if (!modId) {

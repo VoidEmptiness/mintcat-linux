@@ -1,4 +1,5 @@
 import { ModSourceType, ModApprovalStatus } from '@/models/mod/types';
+import {decodeHtmlEntities} from "@/utils/HtmlEntities";
 import type { CompleteModData } from '@/storage/dao/ModDAO';
 import { TimeUtils } from '@/utils/TimeUtils';
 import type { ModcatModEntity } from '@/apis/modcat/types';
@@ -25,7 +26,8 @@ export class ModMapper {
         const rawTags = modInfo.tags ? modInfo.tags.map((tag: any) => tag.name) : [];
         const { tags, versions, approval } = ModMapper.parseTags(rawTags);
 
-        const modName = modInfo.name || "";
+        // mod.io sends names HTML-escaped ("A &amp; B")
+        const modName = decodeHtmlEntities(modInfo.name || "");
 
         const dto: CompleteModData = {
             modId: undefined,  // 尚未存入数据库
@@ -130,9 +132,11 @@ export class ModMapper {
     /**
      * 从 Nexus Mods API 响应转换到 CompleteModData
      */
-    static fromNexusmodsResponse(resolved: NexusModsResolvedMod): CompleteModData {
+    /** `entryUrl`: an entry for this one file of the mod (an add-on next to its main file) */
+    static fromNexusmodsResponse(resolved: NexusModsResolvedMod, entryUrl?: string): CompleteModData {
         const { domain, modId, mod, file } = resolved;
-        const modName = mod.name || "";
+        const fileName = file?.name?.trim();
+        const modName = entryUrl && fileName ? `${mod.name || ""}: ${fileName}` : (mod.name || "");
         const version = file?.version || mod.version || "-";
         const fileSize = NexusModsApi.getFileSizeBytes(file);
         const onlineUpdateDate = file?.uploaded_timestamp
@@ -145,12 +149,13 @@ export class ModMapper {
             modId: undefined,
             platformId: modId,
             gameId: 1,
-            nameId: String(modId),
+            nameId: entryUrl ? `${modId}-${NexusModsApi.getFileId(file)}` : String(modId),
             displayName: modName,
             originalName: modName,
-            url: NexusModsApi.getModUrl(domain, modId),
+            url: entryUrl || NexusModsApi.getModUrl(domain, modId),
             sourceType: NEXUSMODS_PLATFORM,
-            tags: [],
+            // Nexus has categories, not mod.io-style tags; its category is the tag
+            tags: resolved.category ? [resolved.category] : [],
             approvalStatus: ModApprovalStatus.Approved,
             version: {
                 modId: 0,

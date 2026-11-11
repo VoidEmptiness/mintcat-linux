@@ -1,5 +1,6 @@
 use std::io::{Read, Seek};
 
+pub mod asset_diff;
 pub mod common;
 pub mod conflict;
 pub mod drg;
@@ -15,7 +16,10 @@ pub use common::audio_pak::{
 };
 pub use common::mod_bundle_writer::ModBundleWriter;
 pub use common::unpacked_mod::UnpackedMod;
-pub use conflict::{check_mod_conflicts, check_mod_conflicts_from_json};
+pub use conflict::{
+    check_mod_conflicts, check_mod_conflicts_from_json, check_mod_conflicts_with_game,
+    conflict_asset_diff, conflict_assets_summary,
+};
 pub use drg::installation::{DRGInstallation, DRGInstallationType};
 pub use drgrc::installation::RcInstallation;
 pub use installer::{

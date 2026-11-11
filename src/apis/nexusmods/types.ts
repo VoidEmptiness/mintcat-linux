@@ -13,6 +13,8 @@ export interface NexusModsParsedUrl {
     userId?: number;
     rawUrl?: string;
     directDownloadUrl?: string;
+    /** The link asks to add its file as an entry of its own, next to the mod's main file */
+    separate?: boolean;
 }
 
 export interface NexusModsSearchParams {
@@ -20,7 +22,7 @@ export interface NexusModsSearchParams {
     page: number;
     pageSize: number;
     domain?: string;
-    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name';
+    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files';
     sortOrder?: 'asc' | 'desc';
 }
 
@@ -36,12 +38,30 @@ export interface NexusModsUserRef {
     avatar?: string;
 }
 
+/** A requirement listed on the mod's Nexus page */
+export interface NexusModsRequirementNode {
+    modId: string | number;
+    modName: string;
+    url?: string;
+    notes?: string | null;
+    /** Not a Nexus mod (a tool or a site); url then points to it */
+    externalRequirement: boolean;
+    gameId?: string | number;
+}
+
+export interface NexusModsModRequirements {
+    nexusRequirements?: { nodes: NexusModsRequirementNode[] };
+    dlcRequirements?: { notes?: string | null; gameExpansion?: { name?: string } | null }[];
+}
+
 export interface NexusModsModNode {
     id?: string;
     uid?: string;
     modId: number;
     gameId?: number;
     name: string;
+    /** What the mod's page lists as needed */
+    modRequirements?: NexusModsModRequirements;
     summary?: string;
     description?: string;
     author?: string;
@@ -56,6 +76,8 @@ export interface NexusModsModNode {
     updatedAt?: string;
     game?: NexusModsGameRef;
     uploader?: NexusModsUserRef;
+    /** All files of the page, also old and archived uploads (filled in after a search) */
+    files?: import('./files').NexusFileInfo[];
 }
 
 export interface NexusModsSearchResult {
@@ -115,4 +137,14 @@ export interface NexusModsResolvedMod {
     mod: NexusModsV1Mod;
     file?: NexusModsFile;
     sourceUrl?: string;
+    /** The mod's Nexus category, when it could be read */
+    category?: string;
+}
+
+/** The account behind the API key (from /v1/users/validate.json) */
+export interface NexusModsAccount {
+    name: string;
+    /** Premium members may download through the API without visiting the site */
+    isPremium: boolean;
+    isSupporter: boolean;
 }

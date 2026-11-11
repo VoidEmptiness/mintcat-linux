@@ -1,16 +1,25 @@
 import React, {useEffect, useState} from "react";
-import {Button, Checkbox, List, message, Spin} from "antd";
+import {Button, Checkbox, Flex, List, Spin} from "antd";
 import {t} from "i18next";
 import {ModioApi} from "@/apis/modio";
 import type {ModInfo} from "@/apis/modio/ModInfo.ts";
 import {ReloadOutlined} from "@ant-design/icons";
+import {itemKey, type ItemFolders} from "@/dialogs/AddModDialog/ItemFolders";
+import {ItemFolderSelect} from "@/dialogs/AddModDialog/ItemFolderSelect";
 
 const PAGE_SIZE = 100;
 
-export const SubscribedTab = React.forwardRef((_: any, ref) => {
+export const SubscribedTab = React.forwardRef(({folders}: { folders?: ItemFolders }, ref) => {
     const [loading, setLoading] = useState(false);
     const [mods, setMods] = useState<ModInfo[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+    // tell the dialog which mods will be added (for "N mod(s) go to another folder")
+    const report = folders?.report;
+    const selectedKeys = mods.filter(m => selectedIds.has(m.id)).map(m => itemKey.modio(m.id));
+    useEffect(() => {
+        report?.("modio", selectedKeys);
+    }, [selectedKeys.join("\n"), report]);
 
     const loadSubscribed = async () => {
         setLoading(true);
@@ -91,12 +100,17 @@ export const SubscribedTab = React.forwardRef((_: any, ref) => {
                 style={{maxHeight: window.innerHeight - 380, overflow: "auto"}}
                 renderItem={(item) => (
                     <List.Item>
-                        <Checkbox
-                            checked={selectedIds.has(item.id)}
-                            onChange={() => toggleOne(item.id)}
-                        >
-                            <span title={item.profile_url}>{item.name}</span>
-                        </Checkbox>
+                        <Flex justify="space-between" align="center" gap="small" style={{width: "100%"}}>
+                            <Checkbox
+                                checked={selectedIds.has(item.id)}
+                                onChange={() => toggleOne(item.id)}
+                                style={{minWidth: 0}}
+                            >
+                                <span title={item.profile_url}>{item.name}</span>
+                            </Checkbox>
+                            {selectedIds.has(item.id) &&
+                                <ItemFolderSelect folders={folders} itemKey={itemKey.modio(item.id)}/>}
+                        </Flex>
                     </List.Item>
                 )}
             />

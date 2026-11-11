@@ -1,5 +1,5 @@
 import {profiles, profileFolders, profileMods} from '@/storage/db/Schema';
-import {eq, ne, and, desc, asc, like, inArray} from 'drizzle-orm';
+import {eq, ne, and, desc, asc, like, inArray, sql} from 'drizzle-orm';
 import {getDb} from "@/storage/db/Client.ts";
 import {StorageAPI} from "@/storage";
 
@@ -579,6 +579,63 @@ export class ProfileDAO {
     /**
      * 从配置文件中移除模组
      */
+    /**
+     * Remove all of a profile's folders and mod entries, in two statements (deleting them one
+     * by one took two backend calls per mod, seconds for a few hundred mods)
+     */
+    public async clearProfileTree(profileId: number): Promise<void> {
+        const db = await getDb();
+        // the mods first: they point at the folders. Folders pointing at each other are
+        // checked when the statement is done, by which time they are all gone.
+        await db.delete(profileMods).where(eq(profileMods.profileId, profileId));
+        await db.delete(profileFolders).where(eq(profileFolders.profileId, profileId));
+    }
+
+    /** addModToProfile for many mods, a few hundred per statement */
+    public async addModsToProfile(rows: Omit<ProfileModData, 'id' | 'createdAt' | 'updatedAt'>[]): Promise<void> {
+        if (rows.length === 0) return;
+        const db = await getDb();
+        const CHUNK = 200;
+        for (let i = 0; i < rows.length; i += CHUNK) {
+            const values = rows.slice(i, i + CHUNK).map(modData => ({
+                profileId: modData.profileId,
+                modId: modData.modId,
+                parentFolderId: modData.parentFolderId || null,
+                sortOrder: modData.sortOrder || 0,
+                isEnabled: modData.isEnabled ?? true,
+                usedVersion: modData.usedVersion || "",
+            }));
+            // the same mod twice: the later entry wins, as with one addModToProfile after another
+            await db.insert(profileMods).values(values).onConflictDoUpdate({
+                target: [profileMods.profileId, profileMods.modId],
+                set: {
+                    parentFolderId: sql`excluded.parent_folder_id`,
+                    sortOrder: sql`excluded.sort_order`,
+                    isEnabled: sql`excluded.is_enabled`,
+                    usedVersion: sql`excluded.used_version`,
+                    updatedAt: new Date(),
+                },
+            });
+        }
+    }
+
+    /** Several mods out of a profile with one statement */
+    public async removeModsFromProfile(profileId: number, modIds: number[]): Promise<boolean> {
+        if (modIds.length === 0) return true;
+        try {
+            const db = await getDb();
+            await db.delete(profileMods)
+                .where(and(
+                    eq(profileMods.profileId, profileId),
+                    inArray(profileMods.modId, modIds)
+                ));
+            return true;
+        } catch (error) {
+            console.error(`从配置文件中移除模组失败 [配置ID: ${profileId}, ${modIds.length} mods]:`, error);
+            return false;
+        }
+    }
+
     public async removeModFromProfile(profileId: number, modId: number): Promise<boolean> {
         try {
             const db = await getDb();

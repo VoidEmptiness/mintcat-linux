@@ -4,10 +4,14 @@ import {path} from "@tauri-apps/api";
 import {useEventListener} from "@/events";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import React, {useEffect, useState} from "react";
-import {Button, Flex, Form, List} from "antd";
+import {Button, Flex, Form, Input, List, message, Tag, Tooltip} from "antd";
 import {t} from "i18next";
 import {CloseOutlined, FilePptOutlined, FileZipOutlined, FolderOutlined, FolderOpenOutlined, InboxOutlined} from "@ant-design/icons";
 import {BackendRuntimeApi} from "@/apis/BackendRuntimeApi";
+import {isModArchivePath, parseLocalPathLine, splitLines} from "@/utils/LocalModPaths";
+import {logActivity} from "@/services/ActivityLog";
+import {itemKey, type ItemFolders} from "@/dialogs/AddModDialog/ItemFolders";
+import {ItemFolderSelect} from "@/dialogs/AddModDialog/ItemFolderSelect";
 
 
 interface FileItem {
@@ -15,6 +19,7 @@ interface FileItem {
     path: string;
     type: string;  // "folder" | ".pak" | ".zip"
     isUnpackedMod?: boolean;  // true if folder is a valid unpacked mod directory
+    missing?: boolean;  // nothing exists at this path (copied/pasted path to a moved or deleted file)
 }
 
 /**
@@ -52,9 +57,21 @@ async function makeFileItem(filePath: string): Promise<FileItem> {
     };
 }
 
-export const LocalTab = React.forwardRef(({}: any, ref) => {
+export const LocalTab = React.forwardRef(({paths, revision, folders}: {
+    paths?: string[];
+    revision?: number;
+    folders?: ItemFolders;
+}, ref) => {
 
     const [fileList, setFileList] = useState<FileItem[]>([]);
+    const [pasteText, setPasteText] = useState<string>("");
+
+    // tell the dialog which mods are listed (for "N mod(s) go to another folder")
+    const report = folders?.report;
+    const listedKeys = fileList.map(f => itemKey.local(f.path));
+    useEffect(() => {
+        report?.("local", listedKeys);
+    }, [listedKeys.join("\n"), report]);
 
     React.useImperativeHandle(ref, () => ({
         submit: () => {
@@ -63,9 +80,29 @@ export const LocalTab = React.forwardRef(({}: any, ref) => {
     }));
 
 
-    const addFileList = async (filePath: string) => {
-        if (!(await exists(filePath))) {
-            return;
+    /**
+     * Add a path to the list.
+     * With allowMissing, a .pak/.zip path with nothing at it is still listed (marked "Not found")
+     * so you can see it; adding it later logs it as an error.
+     */
+    const addFileList = async (filePath: string, allowMissing = false): Promise<'added' | 'missing' | 'rejected'> => {
+        let present = false;
+        try {
+            present = await exists(filePath);
+        } catch {
+            present = false;
+        }
+
+        if (!present) {
+            if (!allowMissing || !isModArchivePath(filePath)) {
+                return 'rejected';
+            }
+            const name = filePath.split(/[\\/]/).pop() || filePath;
+            const ext = (name.match(/\.(pak|zip)$/i)?.[0] || ".pak").toLowerCase();
+            setFileList(prevList => prevList.find(file => file.path === filePath)
+                ? prevList
+                : [...prevList, {path: filePath, name, type: ext, missing: true}]);
+            return 'missing';
         }
 
         const fileInfo = await stat(filePath);
@@ -75,12 +112,12 @@ export const LocalTab = React.forwardRef(({}: any, ref) => {
         if (fileInfo.isDirectory) {
             // For directories, only accept if it's a valid unpacked mod
             if (!fileItem.isUnpackedMod) {
-                return;
+                return 'rejected';
             }
         } else {
             // For files, only accept .pak or .zip
-            if (!(filePath.endsWith(".zip") || filePath.endsWith(".pak"))) {
-                return;
+            if (!/\.(zip|pak)$/i.test(filePath)) {
+                return 'rejected';
             }
         }
 
@@ -90,7 +127,71 @@ export const LocalTab = React.forwardRef(({}: any, ref) => {
             }
             return [...prevList, fileItem];
         });
+        return 'added';
     }
+
+    /** Add every path in pasted text (plain paths, quoted paths or file:// URIs) */
+    const addPastedText = async (text: string) => {
+        let homeDir: string | undefined;
+        try {
+            homeDir = await path.homeDir();
+        } catch {
+            homeDir = undefined;
+        }
+        let skipped = 0;
+        let missing = 0;
+        for (const line of splitLines(text)) {
+            const localPath = parseLocalPathLine(line, homeDir);
+            const result = localPath ? await addFileList(localPath, true) : 'rejected';
+            if (result === 'missing') {
+                missing++;
+            } else if (result === 'rejected') {
+                skipped++;
+                await logActivity('warning', t("localMods.lineSkipped"), line, 'add-mod');
+            }
+        }
+        if (missing > 0) {
+            message.warning(t("localMods.someMissing", {count: missing}));
+        }
+        if (skipped > 0) {
+            message.warning(t("localMods.someNotAdded", {count: skipped}));
+        }
+    }
+
+    const onPaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+        // Files copied in a file manager arrive as text/uri-list; plain text otherwise
+        const text = e.clipboardData.getData("text/uri-list") || e.clipboardData.getData("text/plain");
+        if (!text) {
+            return;
+        }
+        e.preventDefault();
+        setPasteText("");
+        await addPastedText(text);
+    }
+
+    const onPasteEnter = async () => {
+        const text = pasteText;
+        setPasteText("");
+        if (text.trim()) {
+            await addPastedText(text);
+        }
+    }
+
+    // Paths sent by the clipboard watcher (merged into the list, never replacing it)
+    useEffect(() => {
+        if (!paths || paths.length === 0) {
+            return;
+        }
+        (async () => {
+            let missing = 0;
+            for (const p of paths) {
+                if (await addFileList(p, true) === 'missing') missing++;
+            }
+            if (missing > 0) {
+                message.warning(t("localMods.someMissing", {count: missing}));
+            }
+        })();
+    }, [paths, revision]);
 
     const onSelectPathClick = async () => {
         const results = await open({
@@ -177,35 +278,54 @@ export const LocalTab = React.forwardRef(({}: any, ref) => {
                     </p>
                 </div>
             </Flex>
+            <Input style={{marginTop: 8}}
+                   value={pasteText}
+                   allowClear
+                   placeholder={t("localMods.pastePlaceholder")}
+                   onChange={(e) => setPasteText(e.target.value)}
+                   onPaste={onPaste}
+                   onPressEnter={onPasteEnter}
+            />
             <br/>
             <Form.Item label={`${t("Selected Files")} ${fileList.length}`}>
                 <div className={"app-drag-list"}
                      style={{
-                         height: window.innerHeight - 400,
+                         height: window.innerHeight - 440,
                      }}>
                     <List size={"small"}
                           dataSource={fileList}
                           style={{
-                              height: window.innerHeight - 400,
+                              height: window.innerHeight - 440,
                           }}
                           renderItem={item => (
                               <List.Item className={"app-drag-list-item"}>
                                   <Flex justify={"space-between"}
+                                        align={"center"}
                                         gap={"small"}
                                         style={{width: "100%"}}
                                   >
-                                      <Flex gap={"small"}>
+                                      <Flex gap={"small"} style={{minWidth: 0, flex: 1}}>
                                           {
                                               item.type === "folder" ? (
                                                   item.isUnpackedMod ? <FolderOpenOutlined style={{color: '#52c41a'}}/> : <FolderOutlined/>
                                               ) :
                                               item.type === ".pak" ? <FilePptOutlined/> : <FileZipOutlined/>
                                           }
-                                          <span>
+                                          <span title={item.missing ? undefined : item.path}
+                                                style={{
+                                                    minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                                    ...(item.missing ? {color: '#ff4d4f'} : {}),
+                                                }}>
                                               {item.name}
                                               {item.isUnpackedMod && <span style={{color: '#52c41a', marginLeft: 8, fontSize: 12}}>(Unpacked)</span>}
+                                              {item.missing &&
+                                                  <Tooltip title={<span>{t("localMods.notFoundHint")}<br/>
+                                                      <span style={{fontFamily: "monospace", fontSize: 12, wordBreak: "break-all"}}>{item.path}</span></span>}>
+                                                      <Tag color="red" style={{marginLeft: 8}}>{t("localMods.notFound")}</Tag>
+                                                  </Tooltip>}
                                           </span>
                                       </Flex>
+                                      <ItemFolderSelect folders={folders} itemKey={itemKey.local(item.path)}/>
                                       <Button variant={"text"}
                                               size={"small"}
                                               color={"red"}

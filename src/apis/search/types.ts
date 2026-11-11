@@ -39,7 +39,7 @@ export interface SearchResultItem {
     /** 标签 */
     tags?: string[];
     /** 来源平台标识 */
-    source: SearchSource;
+    source: SearchSourceKey;
     /** 原始数据 (用于特定平台的额外操作) */
     rawData?: unknown;
 }
@@ -53,6 +53,16 @@ export enum SearchSource {
     NEXUSMODS = 'nexusmods',
     THUNDERSTORE = 'thunderstore',
     LOCAL = 'local',
+}
+
+/** Key of a user-added mod repository source, e.g. "repo:pak-hub" */
+export type RepositorySourceKey = `repo:${string}`;
+
+/** Any search source: a built-in one or a user-added repository */
+export type SearchSourceKey = SearchSource | RepositorySourceKey;
+
+export function isRepositorySource(source: string | undefined | null): source is RepositorySourceKey {
+    return typeof source === 'string' && source.startsWith('repo:');
 }
 
 /**
@@ -70,7 +80,7 @@ export interface SearchParams {
     /** Nexus Mods 游戏域名（如 deeprockgalactic / deeprockgalacticroguecore） */
     nexusmodsGameDomain?: string;
     /** 排序字段 */
-    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'name';
+    sortBy?: 'downloads' | 'subscribers' | 'rating' | 'date' | 'created' | 'name' | 'files';
     /** 排序方向 */
     sortOrder?: 'asc' | 'desc';
     /** 标签过滤 */
@@ -92,7 +102,7 @@ export interface SearchResult {
     /** 是否有更多数据 */
     hasMore: boolean;
     /** 搜索源 */
-    source: SearchSource;
+    source: SearchSourceKey;
 }
 
 /**

@@ -47,19 +47,38 @@ body,
 .ant-card,
 .ant-card-body,
 .ant-modal-content,
-.ant-modal-header,
-.ant-modal-footer,
+.ant-modal-container,
 .ant-popover-inner,
+.ant-popover-container,
 .ant-dropdown-menu,
 .ant-dropdown-menu-item,
 .ant-select-dropdown,
 .ant-select-item,
-.ant-tooltip-inner,
 .ant-picker-panel-container,
 .ant-menu,
-.ant-menu-submenu-popup,
-.ant-empty-description {
+.ant-menu-submenu-popup {
     background: var(--mc-dark-bg) !important;
+    color: var(--mc-dark-text) !important;
+}
+
+/* antd 6 renamed the modal/popover boxes to *-container and made their header,
+   footer and empty-state text transparent. Painting those parts black left black
+   strips inside the (grey) boxes, so they now inherit the box colour instead. */
+.ant-modal-header,
+.ant-modal-footer,
+.ant-empty-description {
+    background: transparent !important;
+}
+
+/* Black boxes on a black page need an edge */
+.ant-modal-container,
+.ant-popover-container {
+    border: 1px solid var(--mc-dark-border);
+}
+
+/* Tooltips keep antd's dark grey so they stand out from the page */
+.ant-tooltip-inner,
+.ant-tooltip-container {
     color: var(--mc-dark-text) !important;
 }
 

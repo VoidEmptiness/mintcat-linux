@@ -1,3 +1,5 @@
+import {useLogPanelOffset} from "@/components/LogPanel";
+import {useWindowHeight} from "@/utils/useWindowSize";
 import React from 'react';
 import {Badge, Button, Card, Collapse, Flex, message, Space, Spin, Tag, theme, Typography} from 'antd';
 import {
@@ -34,6 +36,8 @@ function formatElapsed(seconds: number): string {
 }
 
 export function AcceleratorPage() {
+    const logPanelOffset = useLogPanelOffset();
+    const windowHeight = useWindowHeight();
     const {token} = theme.useToken();
     const [status, setStatus] = React.useState<ProxyRuntimeStatus | null>(null);
     const [manifest, setManifest] = React.useState<UpdateCheckManifestItem | undefined>();
@@ -163,7 +167,7 @@ export function AcceleratorPage() {
 
     if (loading || !status) {
         return (
-            <Flex align="center" justify="center" style={{height: window.innerHeight - 81}}>
+            <Flex align="center" justify="center" style={{height: windowHeight - 81 - logPanelOffset}}>
                 <Spin tip={t('Loading')}/>
             </Flex>
         );
@@ -178,7 +182,7 @@ export function AcceleratorPage() {
             ? 'accelerator-page__button--idle'
             : 'accelerator-page__button--disabled';
     const acceleratorThemeStyle = {
-        height: window.innerHeight - 81,
+        height: windowHeight - 81 - logPanelOffset,
         '--accelerator-primary': token.colorPrimary,
         '--accelerator-primary-hover': token.colorPrimaryHover,
         '--accelerator-primary-active': token.colorPrimaryActive,

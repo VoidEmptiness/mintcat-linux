@@ -9,6 +9,7 @@ import { ButtonLayout, SettingLayout } from '@/pages/SettingPage/Layout.ts';
 import { useEventListener } from '@/events';
 import {
     setMintcatProxyModeResolved,
+    DEFAULT_MINTCAT_PROXY_MODE,
     type MintcatProxyMode,
 } from '@/services/network';
 import {
@@ -44,7 +45,7 @@ function formatProbeError(err?: string): string {
 export function NetworkSettings() {
     const [serverMode, setServerMode] = React.useState<ServerModeUi>('auto');
     const [networkProxy, setNetworkProxy] = React.useState('');
-    const [mintcatProxyMode, setMintcatProxyMode] = React.useState<MintcatProxyMode>('auto');
+    const [mintcatProxyMode, setMintcatProxyMode] = React.useState<MintcatProxyMode>(DEFAULT_MINTCAT_PROXY_MODE);
     const [probeResults, setProbeResults] = React.useState<ProbeResult[]>([]);
     const [probing, setProbing] = React.useState(false);
 
@@ -124,7 +125,7 @@ export function NetworkSettings() {
     return (
         <Card title={t('Network Settings')} style={{ marginBottom: '10px' }}>
             <Form {...SettingLayout}>
-                <Form.Item label={t('Release Resource Server')}>
+                <Form.Item label={t('Release Resource Server')} tooltip={t("help.resourceServer")}>
                     <Radio.Group onChange={onServerModeChange} value={serverMode}>
                         <Space orientation="vertical">
                             <Radio value="auto">{t('Auto Select')}</Radio>
@@ -136,7 +137,7 @@ export function NetworkSettings() {
                         </Space>
                     </Radio.Group>
                 </Form.Item>
-                <Form.Item label={t('Test Connection')}>
+                <Form.Item label={t('Test Connection')} tooltip={t("help.testConnection")}>
                     <Flex vertical gap={8}>
                         <Button
                             type="default"
@@ -171,7 +172,7 @@ export function NetworkSettings() {
                         ) : null}
                     </Flex>
                 </Form.Item>
-                <Form.Item label={t('Network Proxy')}>
+                <Form.Item label={t('Network Proxy')} tooltip={t("help.networkProxy")}>
                     <Input
                         placeholder="http://127.0.0.1:7890"
                         value={networkProxy}
@@ -179,7 +180,7 @@ export function NetworkSettings() {
                         onBlur={(e) => void onNetworkProxyChange(e.target.value)}
                     />
                 </Form.Item>
-                <Form.Item label={t('MintCat Proxy')}>
+                <Form.Item label={t('MintCat Proxy')} tooltip={t("help.mintcatProxy")}>
                     <Flex vertical gap={8}>
                         <Radio.Group onChange={onMintcatProxyModeChange} value={mintcatProxyMode}>
                             <Space orientation="vertical">

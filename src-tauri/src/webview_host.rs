@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse},
-    AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+
+/// Sent with `{ label }` when a managed window is gone (closed by the user or after a capture)
+pub const EVENT_MANAGED_WEBVIEW_CLOSED: &str = "managed-webview-closed";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,8 +70,15 @@ pub async fn open_managed_webview(
         .map_err(|error| format!("invalid webview URL: {error}"))?;
     let label = sanitize_label(&request.label);
 
+    // Already open (the same mod and file): bring it back instead of opening a second one.
+    // Closing and re-creating it under the same label fails, because closing takes a moment.
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.close();
+        if let Err(error) = window.navigate(page_url) {
+            log::warn!("[WebviewHost] could not reload {}: {}", label, error);
+        }
+        let _ = window.unminimize();
+        focus_window(&app, &window);
+        return Ok(());
     }
 
     let nav_app = app.clone();
@@ -85,6 +95,10 @@ pub async fn open_managed_webview(
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(page_url))
         .title(request.title)
         .inner_size(request.width, request.height)
+        .min_inner_size(480.0, 360.0)
+        .resizable(true)
+        .maximizable(true)
+        .center()
         .decorations(true)
         .visible(true)
         .focusable(true)
@@ -94,7 +108,7 @@ pub async fn open_managed_webview(
         builder = builder.initialization_script(script);
     }
 
-    builder
+    let window = builder
         .on_navigation(move |url| {
             decide_deferred(
                 nav_app.clone(),
@@ -141,10 +155,72 @@ pub async fn open_managed_webview(
             NewWindowResponse::Deny
         })
         .build()
-        .map(|window| focus_window(&app, &window))
         .map_err(|error| error.to_string())?;
 
+    let closed_app = app.clone();
+    let closed_label = label.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            let _ = closed_app.emit(
+                EVENT_MANAGED_WEBVIEW_CLOSED,
+                serde_json::json!({ "label": closed_label }),
+            );
+        }
+    });
+    focus_window(&app, &window);
+
     Ok(())
+}
+
+/// Delete the cookies of these sites (and their subdomains) from MINTCAT's web views, e.g. to
+/// sign out of the Nexus Mods website. Windows showing those sites are closed first.
+/// Returns how many cookies were deleted.
+pub async fn clear_site_cookies(app: AppHandle, domains: Vec<String>) -> Result<usize, String> {
+    let domains: Vec<String> = domains
+        .iter()
+        .map(|d| d.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|d| !d.is_empty())
+        .collect();
+    if domains.is_empty() {
+        return Ok(0);
+    }
+    let matches = |host: &str| {
+        let host = host.trim_start_matches('.').to_ascii_lowercase();
+        domains
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+    };
+
+    for (label, window) in app.webview_windows() {
+        if label == "main" {
+            continue;
+        }
+        let shows_site = window
+            .url()
+            .ok()
+            .and_then(|url| url.host_str().map(|h| matches(h)))
+            .unwrap_or(false);
+        if shows_site {
+            let _ = window.close();
+        }
+    }
+
+    // All windows share one cookie store; the main window is always there to reach it
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    let cookies = main.cookies().map_err(|error| error.to_string())?;
+    let mut deleted = 0;
+    for cookie in cookies {
+        let on_site = cookie.domain().map(|d| matches(d)).unwrap_or(false);
+        if on_site {
+            match main.delete_cookie(cookie) {
+                Ok(()) => deleted += 1,
+                Err(error) => log::warn!("[WebviewHost] could not delete a cookie: {}", error),
+            }
+        }
+    }
+    Ok(deleted)
 }
 
 fn decide_deferred(

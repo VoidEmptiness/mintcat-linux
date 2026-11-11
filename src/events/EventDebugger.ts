@@ -214,6 +214,7 @@ export class EventDebugger {
 
       // 对话框事件
       'config-manage-dialog-open',
+      'mint-import-open',
       'title-bar-load-avatar',
       'add-mod-dialog-init-data',
       'add-mod-dialog-ok',

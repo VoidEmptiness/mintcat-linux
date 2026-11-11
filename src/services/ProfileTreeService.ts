@@ -1,6 +1,6 @@
 import { ProfileTreeItem } from '@/models/profile/ProfileTreeItem';
 import { ProfileTreeType, ProfileTreeGroupType } from '@/models/profile/types';
-import type { ProfileData } from '@/storage/dao/ProfileDAO';
+import type { ProfileData, ProfileModData } from '@/storage/dao/ProfileDAO';
 import { StorageAPI } from '@/storage';
 import type { CompleteModData } from '@/storage/dao/ModDAO';
 
@@ -71,22 +71,13 @@ export class ProfileTreeService {
         const profileDAO = await StorageAPI.getProfiles();
 
         try {
-            const folders = await profileDAO.getProfileFolders(profileId);
-            const mods = await profileDAO.getProfileMods(profileId);
-
-            // 清除所有现有 mod 关联
-            for (const mod of mods) {
-                await profileDAO.removeModFromProfile(profileId, mod.modId);
-            }
-
-            // 删除所有文件夹（按 ID 降序删除，避免外键冲突）
-            const sortedFolders = [...folders].sort((a, b) => (b.id! - a.id!));
-            for (const folder of sortedFolders) {
-                await profileDAO.deleteFolder(folder.id!);
-            }
-
-            // 重新保存整棵树
-            await this.saveProfileTreeItems(root.children, profileDAO, profileId, null, 0);
+            // Clear the profile's tree and write it again. Folders go in one at a time (their
+            // new ids are needed), the mods all together afterwards: a few backend calls
+            // instead of two per mod.
+            await profileDAO.clearProfileTree(profileId);
+            const modRows: Omit<ProfileModData, 'id' | 'createdAt' | 'updatedAt'>[] = [];
+            await this.saveProfileTreeItems(root.children, profileDAO, profileId, null, 0, modRows);
+            await profileDAO.addModsToProfile(modRows);
 
         } catch (error) {
             console.error('[ProfileTreeService] Failed to save profile tree:', error);
@@ -411,7 +402,8 @@ export class ProfileTreeService {
         profileDAO: any,
         profileId: number,
         parentFolderId: number | null,
-        sortOrder: number
+        sortOrder: number,
+        modRows: Omit<ProfileModData, 'id' | 'createdAt' | 'updatedAt'>[]
     ): Promise<void> {
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
@@ -431,14 +423,15 @@ export class ProfileTreeService {
                         profileDAO,
                         profileId,
                         folder.id!,
-                        0
+                        0,
+                        modRows
                     );
                 }
             } else if (item.type === ProfileTreeType.ITEM) {
-                await profileDAO.addModToProfile({
+                modRows.push({
                     profileId,
                     modId: item.id,
-                    parentFolderId,
+                    parentFolderId: parentFolderId ?? undefined,
                     sortOrder: sortOrder + i,
                     isEnabled: item.enabled,
                     usedVersion: item.usedVersion

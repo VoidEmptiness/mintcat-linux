@@ -168,6 +168,11 @@ fn safe_segment(value: &str) -> Result<String, String> {
 }
 
 fn active_dir(app: &AppHandle) -> Option<PathBuf> {
+    // Linux build: always run the bundled frontend (an upstream hot frontend
+    // would drop this build's patches).
+    if cfg!(not(target_os = "windows")) {
+        return None;
+    }
     let state = read_state(app);
     if state.safe_mode {
         return None;

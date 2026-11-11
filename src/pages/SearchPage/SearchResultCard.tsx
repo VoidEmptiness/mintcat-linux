@@ -1,14 +1,27 @@
 import React, {memo, useCallback, useState} from 'react';
-import {Avatar, Button, Dropdown, Space, Skeleton} from 'antd';
-import {DownloadOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
+import {ContextMenu} from "@/components/ContextMenu";
+import {Avatar, Button, Space, Skeleton, Tag, Tooltip} from 'antd';
+import {CalendarOutlined, CheckCircleFilled, DownloadOutlined, FileOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
+import type {ListedIndex, ListedState} from '@/services/ListedMods';
+import {CardRequirements, useRequirementPlan} from './CardRequirements';
+import {CardFiles, type FilePick} from './CardFiles';
+import {ModioSupportButtons, NexusSupportButtons} from '@/components/SupportButtons';
+import {nexusDomainOf} from '@/services/ModSupport';
+import type {NexusModsModNode} from '@/apis/nexusmods/types';
 import {t} from 'i18next';
 import {open} from '@tauri-apps/plugin-shell';
 import type {MenuProps} from 'antd';
-import {SearchResultItem} from '@/apis/search';
+import {SearchResultItem, SearchSource, isRepositorySource, type RepositoryResultData} from '@/apis/search';
+import {repositoryDescription, repositoryTitleFromFiles, useRepositoryDetail} from '@/apis/repositories/details';
 
 interface SearchResultCardProps {
     item: SearchResultItem;
-    onAdd: (item: SearchResultItem) => void;
+    /** In your lists already (undefined: not, or not known) */
+    listed?: ListedState;
+    /** Your lists, to mark requirements that are in them */
+    index: ListedIndex;
+    /** `pick`: a file clicked on the card (mods with more than one) */
+    onAdd: (item: SearchResultItem, pick?: FilePick) => void;
     onTranslate: (itemId: string) => void;
     onRestore: (itemId: string) => void;
 }
@@ -19,6 +32,8 @@ interface SearchResultCardProps {
  */
 export const SearchResultCard = memo<SearchResultCardProps>(({
     item,
+    listed,
+    index,
     onAdd,
     onTranslate,
     onRestore,
@@ -50,6 +65,9 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
     const handleAddClick = useCallback(() => {
         onAdd(item);
     }, [item, onAdd]);
+    const handlePick = useCallback((pick: FilePick) => {
+        onAdd(item, pick);
+    }, [item, onAdd]);
 
     // 处理标题点击
     const handleTitleClick = useCallback(async () => {
@@ -64,13 +82,25 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
         ? item.author.cachedAvatarUrl
         : item.author.avatarUrl;
 
+    // User-added repositories have no images or download counts
+    const isRepo = isRepositorySource(item.source);
+    const repoData = isRepo ? item.rawData as RepositoryResultData | undefined : undefined;
+    // Pak Hub style lists only carry the first line of the post; the post itself has the
+    // full text and the file names, which make a better title ("AlwaysSprint")
+    const repoDetail = useRepositoryDetail(repoData?.baseUrl, repoData?.slug);
+    const repoTitle = repositoryTitleFromFiles(repoDetail);
+    const repoText = repositoryDescription(repoDetail);
+    const plan = useRequirementPlan(item, index, repoDetail);
+
     // 显示的名称和摘要
-    const displayName = item.nameTrans || item.name;
-    const displaySummary = item.summaryTrans || item.summary;
+    const displayName = item.nameTrans || repoTitle || item.name;
+    const displaySummary = item.summaryTrans || repoText || item.summary;
+    const repoDate = repoData?.postedAt && Number.isFinite(Date.parse(repoData.postedAt))
+        ? new Date(repoData.postedAt).toLocaleDateString()
+        : '';
 
     return (
-        <Dropdown
-            trigger={['contextMenu']}
+        <ContextMenu
             menu={{
                 items: contextMenuItems,
                 onClick: handleMenuClick,
@@ -79,7 +109,8 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
             <div className="search-result-card">
                 <div className="search-result-card-content">
                     <div className="search-result-card-avatar">
-                        {(!displayAvatar || !avatarLoaded) && (
+                        {isRepo && <Avatar size={48} icon={<FileOutlined/>}/>}
+                        {!isRepo && (!displayAvatar || !avatarLoaded) && (
                             <Skeleton.Avatar active size={48} />
                         )}
                         {displayAvatar && (
@@ -113,27 +144,49 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                             <a onClick={handleTitleClick} className="search-result-card-name">
                                 {displayName}
                             </a>
-                            <Button
-                                type="text"
-                                size="small"
-                                icon={<PlusCircleOutlined />}
-                                onClick={handleAddClick}
-                                className="search-result-card-add-btn"
-                            />
+                            <Tooltip title={listed?.inActiveProfile ? t('browse.addAgainTip') : t('browse.addTip')}>
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<PlusCircleOutlined />}
+                                    onClick={handleAddClick}
+                                    className="search-result-card-add-btn"
+                                />
+                            </Tooltip>
+                            <ListedTag listed={listed}/>
                         </div>
 
                         <div className="search-result-card-description">
                             {displaySummary}
                         </div>
 
+                        <CardRequirements plan={plan}/>
+
+                        <CardFiles item={item} listed={listed} index={index} repoDetail={repoDetail} onPick={handlePick}/>
+
                         <div className="search-result-card-stats">
                             <Space size="middle">
-                                <span className="search-result-card-stat">
-                                    <DownloadOutlined /> {formatNumber(item.stats.downloads)}
-                                </span>
-                                <span className="search-result-card-stat">
-                                    <LikeOutlined /> {formatNumber(item.stats.subscribers)}
-                                </span>
+                                {isRepo ? (
+                                    <>
+                                        <span className="search-result-card-stat">
+                                            <FileOutlined /> {t('repo.fileCount', {count: repoData?.fileCount ?? 0})}
+                                        </span>
+                                        {repoDate && (
+                                            <span className="search-result-card-stat">
+                                                <CalendarOutlined /> {repoDate}
+                                            </span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="search-result-card-stat">
+                                            <DownloadOutlined /> {formatNumber(item.stats.downloads)}
+                                        </span>
+                                        <span className="search-result-card-stat">
+                                            <LikeOutlined /> {formatNumber(item.stats.subscribers)}
+                                        </span>
+                                    </>
+                                )}
                                 {item.stats.rating != null && item.stats.rating > 0 && (
                                     <span className="search-result-card-stat search-result-card-rating">
                                         <StarFilled /> {formatRating(item.stats.rating)}
@@ -145,10 +198,19 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                                     </span>
                                 )}
                             </Space>
+                            {item.source === SearchSource.NEXUSMODS && item.platformId && (
+                                <NexusSupportButtons domain={nexusDomainOf(item.profileUrl)}
+                                                     modId={item.platformId}
+                                                     name={displayName}
+                                                     modVersion={(item.rawData as NexusModsModNode | undefined)?.version}/>
+                            )}
+                            {item.source === SearchSource.MODIO && item.platformId && (
+                                <ModioSupportButtons modId={item.platformId} name={displayName}/>
+                            )}
                         </div>
                     </div>
 
-                    <div className="search-result-card-thumbnail">
+                    {!isRepo && <div className="search-result-card-thumbnail">
                         {(!displayThumbnail || !imageLoaded) && (
                             <Skeleton.Image
                                 active
@@ -177,14 +239,38 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                                 }}
                             />
                         )}
-                    </div>
+                    </div>}
                 </div>
             </div>
-        </Dropdown>
+        </ContextMenu>
     );
 });
 
 SearchResultCard.displayName = 'SearchResultCard';
+
+/** "In your list · Folder" (green) or "In profile X" (blue) next to the title */
+function ListedTag({listed}: { listed?: ListedState }) {
+    if (!listed) return null;
+    if (listed.inActiveProfile) {
+        const others = listed.otherProfiles.length > 0 ? ` ${t('browse.alsoIn', {names: listed.otherProfiles.join(', ')})}` : '';
+        return (
+            <Tooltip title={(listed.folder ? t('browse.inYourListFolderTip', {folder: listed.folder}) : t('browse.inYourListTip')) + others}>
+                <Tag color="success" icon={<CheckCircleFilled/>} className="search-result-card-listed">
+                    {listed.folder ? t('browse.inYourListFolder', {folder: listed.folder.split(' / ').pop()}) : t('browse.inYourList')}
+                </Tag>
+            </Tooltip>
+        );
+    }
+    return (
+        <Tooltip title={t('browse.inOtherProfilesTip', {names: listed.otherProfiles.join(', ')})}>
+            <Tag color="processing" className="search-result-card-listed">
+                {listed.otherProfiles.length === 1
+                    ? t('browse.inProfile', {name: listed.otherProfiles[0]})
+                    : t('browse.inProfiles', {count: listed.otherProfiles.length})}
+            </Tag>
+        </Tooltip>
+    );
+}
 
 /**
  * 格式化数字（如 1234 -> 1.2K）

@@ -1,4 +1,5 @@
 import { message } from 'antd';
+import { decodeHtmlEntities } from '@/utils/HtmlEntities';
 import { t } from 'i18next';
 import { CacheApi } from '@/apis/CacheApi';
 import { DownloadApi } from '@/apis/DownloadApi';
@@ -10,6 +11,7 @@ import type { CompleteModData } from '@/storage/dao/ModDAO';
 import {
     NEXUSMODS_DRG_DOMAIN,
     NEXUSMODS_PLATFORM,
+    type NexusModsAccount,
     type NexusModsDownloadLink,
     type NexusModsFile,
     type NexusModsFilesResponse,
@@ -20,6 +22,12 @@ import {
     type NexusModsSearchResult,
     type NexusModsV1Mod,
 } from './types';
+import { fileIdOfDownload, NEXUS_FILE_FIELDS, toFileInfo, trackedFile, type NexusFileInfo } from './files';
+import { NexusFileChoice } from '@/services/NexusFileChoice';
+
+
+/** How long one Nexus Mods API request may take before it is tried again */
+const NEXUS_TIMEOUT_MS = 15_000;
 
 export {
     NEXUSMODS_DRG_DOMAIN,
@@ -45,6 +53,16 @@ const NEXUSMODS_APP_NAME = 'MintCat';
 const NEXUSMODS_APP_VERSION = '0.5.5';
 
 const authResolver = new AuthResolver();
+
+/** Marks a Files-tab link that adds its file as an entry of its own */
+const SEPARATE_PARAM = 'mintcat_entry';
+const SEPARATE_VALUE = 'separate';
+
+/** The files of mods looked at recently ("<gameId>:<modId>"), so paging back and forth asks once */
+const fileCache = new Map<string, { at: number; files: NexusFileInfo[] }>();
+const FILE_CACHE_MS = 10 * 60_000;
+/** Mods asked about in one files request */
+const FILES_PER_REQUEST = 40;
 
 type GraphqlResponse<T> = {
     data?: T;
@@ -76,13 +94,130 @@ export class NexusModsAuthenticationRequiredError extends Error {
     }
 }
 
+/** Nexus wouldn't take an endorsement: NOT_DOWNLOADED_MOD, TOO_SOON_AFTER_DOWNLOAD or IS_OWN_MOD */
+export class NexusModsEndorseError extends Error {
+    constructor(public readonly code: string, detail: string) {
+        super(detail);
+        this.name = 'NexusModsEndorseError';
+    }
+}
+
+/** Mod categories and game ids from Nexus, for the session */
+const categoryCache = new Map<string, string | undefined>();
+const modNames = new Map<string, string>();
+const gameIds = new Map<string, number>();
+
+/** How long an account check is reused (premium can change, but not by the minute) */
+const ACCOUNT_CHECK_TTL_MS = 10 * 60_000;
+let accountCheck: { key: string; at: number; account: NexusModsAccount | null } | null = null;
+let accountCheckRunning: Promise<NexusModsAccount | null> | null = null;
+
 export class NexusModsApi {
     public static async getApiKey(): Promise<string> {
         return await authResolver.getNexusmodsToken();
     }
 
+    /**
+     * The account behind the saved API key: null without a key or when Nexus doesn't accept it.
+     * Reused for 10 minutes (and refreshed when the key changes).
+     */
+    public static async getAccount(force = false): Promise<NexusModsAccount | null> {
+        const apiKey = await NexusModsApi.getApiKey();
+        if (!apiKey) return null;
+        if (!force && accountCheck && accountCheck.key === apiKey && Date.now() - accountCheck.at < ACCOUNT_CHECK_TTL_MS) {
+            return accountCheck.account;
+        }
+        if (!force && accountCheckRunning) return await accountCheckRunning;
+        const run = (async () => {
+            try {
+                const data = await NexusModsApi.requestJson<{ name?: string; is_premium?: boolean; is_supporter?: boolean; 'is_premium?'?: boolean }>(
+                    '/v1/users/validate.json');
+                const account: NexusModsAccount = {
+                    name: data.name ?? '',
+                    isPremium: !!(data.is_premium ?? data['is_premium?']),
+                    isSupporter: !!data.is_supporter,
+                };
+                accountCheck = {key: apiKey, at: Date.now(), account};
+                return account;
+            } catch (error) {
+                if (NexusModsApi.isAuthenticationRequiredError(error)) {
+                    accountCheck = {key: apiKey, at: Date.now(), account: null};
+                    return null;
+                }
+                // offline or Nexus unreachable: keep what was known, ask again next time
+                console.warn('[NexusModsApi] account check failed:', error instanceof Error ? error.message : error);
+                return accountCheck?.key === apiKey ? accountCheck.account : null;
+            } finally {
+                accountCheckRunning = null;
+            }
+        })();
+        accountCheckRunning = run;
+        return await run;
+    }
+
+    /**
+     * Premium members get files straight from the API, so no Nexus page has to be opened.
+     */
+    public static async canDownloadThroughApi(): Promise<boolean> {
+        return !!(await NexusModsApi.getAccount())?.isPremium;
+    }
+
+    /** A download of this link needs no visit to the site (premium, or the link carries a download key) */
+    public static async canDownloadWithoutVisit(link: string | undefined): Promise<boolean> {
+        return NexusModsApi.hasReusableDownloadCredential(link) || await NexusModsApi.canDownloadThroughApi();
+    }
+
     public static async isAuthenticated(): Promise<boolean> {
         return !!(await NexusModsApi.getApiKey());
+    }
+
+    // ---------- tracking and endorsing (the API key's account) ----------
+
+    /** Mods the key's account tracks (all games) */
+    public static async getTrackedMods(): Promise<{ modId: number; domain: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string }[]>('/v1/user/tracked_mods.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase()}));
+    }
+
+    /** Endorsement status of every mod the account endorsed or abstained from (all games) */
+    public static async getEndorsements(): Promise<{ modId: number; domain: string; status: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string; status?: string }[]>('/v1/user/endorsements.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase(), status: String(m.status ?? '')}));
+    }
+
+    public static async setTracked(domain: string, modId: number, tracked: boolean): Promise<void> {
+        const query = new URLSearchParams({domain_name: domain});
+        // DELETE with a body isn't sent by every HTTP stack: the id goes in the query too
+        if (!tracked) query.set('mod_id', String(modId));
+        await NexusModsApi.requestJson(`/v1/user/tracked_mods.json?${query}`, {
+            method: tracked ? 'POST' : 'DELETE',
+            form: {mod_id: String(modId)},
+            allowStatus: tracked ? [] : [404], // not tracked anyway
+        });
+    }
+
+    /**
+     * Endorse a mod (or take the endorsement back: "abstain"). Nexus only takes endorsements for
+     * mods the account downloaded; its reason comes back as NexusModsEndorseError.
+     */
+    public static async setEndorsed(domain: string, modId: number, endorse: boolean, version?: string): Promise<string> {
+        const form: Record<string, string> = {};
+        if (version) form.version = version;
+        try {
+            const data = await NexusModsApi.requestJson<{ status?: string }>(
+                `/v1/games/${encodeURIComponent(domain)}/mods/${modId}/${endorse ? 'endorse' : 'abstain'}.json`,
+                {method: 'POST', form});
+            return String(data?.status ?? (endorse ? 'Endorsed' : 'Abstained'));
+        } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            const code = /\b(NOT_DOWNLOADED_MOD|TOO_SOON_AFTER_DOWNLOAD|IS_OWN_MOD)\b/.exec(text)?.[1];
+            if (code) throw new NexusModsEndorseError(code, text);
+            throw error;
+        }
     }
 
     public static getModUrl(domain: string, modId: number): string {
@@ -118,6 +253,7 @@ export class NexusModsApi {
                         modId,
                         fileId: fileIdFromPath || fileIdFromQuery,
                         rawUrl: value,
+                        ...(parsed.searchParams.get(SEPARATE_PARAM) === SEPARATE_VALUE ? {separate: true} : {}),
                     };
                 }
             }
@@ -128,10 +264,13 @@ export class NexusModsApi {
                 const modId = Number(hash.get('mintcat_mod_id') || 0);
                 const fileId = Number(hash.get('mintcat_file_id') || 0) || undefined;
                 if (domain && Number.isFinite(modId) && modId > 0) {
+                    // the page it was captured from may ask for an entry of its own
+                    const separate = (hash.get('mintcat_profile_url') || '').includes(`${SEPARATE_PARAM}=${SEPARATE_VALUE}`);
                     return {
                         domain,
                         modId,
                         fileId,
+                        ...(separate ? {separate: true} : {}),
                         expires: Number(parsed.searchParams.get('expires') || 0) || undefined,
                         userId: Number(parsed.searchParams.get('user_id') || 0) || undefined,
                         rawUrl: value,
@@ -272,7 +411,7 @@ export class NexusModsApi {
             const start = params.page * params.pageSize;
             const end = start + params.pageSize;
             return {
-                items: filteredNodes.slice(start, end),
+                items: await NexusModsApi.withDetails(filteredNodes.slice(start, end)),
                 total: filteredNodes.length,
                 page: params.page,
                 pageSize: params.pageSize,
@@ -287,7 +426,7 @@ export class NexusModsApi {
             count: requestPageSize,
         });
 
-        const items = data.mods?.nodes ?? [];
+        const items = await NexusModsApi.withDetails(data.mods?.nodes ?? []);
         const total = data.mods?.totalCount ?? items.length;
         return {
             items,
@@ -296,6 +435,145 @@ export class NexusModsApi {
             pageSize: params.pageSize,
             hasMore: (params.page + 1) * params.pageSize < total,
         };
+    }
+
+    /** The requirements and the separate files of the mods shown (asked for side by side) */
+    private static async withDetails(nodes: NexusModsModNode[]): Promise<NexusModsModNode[]> {
+        await Promise.all([NexusModsApi.withRequirements(nodes), NexusModsApi.withFiles(nodes)]);
+        return nodes;
+    }
+
+    /** The files each mod's page lists now (shown on the card when there is more than one) */
+    private static async withFiles(nodes: NexusModsModNode[]): Promise<void> {
+        try {
+            const byKey = await NexusModsApi.getFilesForMods(nodes.map(n => ({gameId: n.gameId || n.game?.id, modId: n.modId})));
+            for (const node of nodes) {
+                const files = byKey.get(`${Number(node.gameId || node.game?.id)}:${Number(node.modId)}`);
+                if (files) node.files = files;
+            }
+        } catch (error) {
+            console.warn('[NexusModsApi] files not read:', error instanceof Error ? error.message : error);
+        }
+    }
+
+    /**
+     * All files (current and old) on the pages of these mods, from the public GraphQL API,
+     * keyed "<gameId>:<modId>"; up to 40 mods per request. Mods that couldn't be read are left out.
+     */
+    public static async getFilesForMods(mods: { gameId: number | string | undefined; modId: number | string }[]): Promise<Map<string, NexusFileInfo[]>> {
+        const out = new Map<string, NexusFileInfo[]>();
+        const missing: { gameId: number; modId: number; key: string }[] = [];
+        const now = Date.now();
+        for (const mod of mods) {
+            const gameId = Number(mod.gameId);
+            const modId = Number(mod.modId);
+            if (!(gameId > 0) || !(modId > 0)) continue;
+            const key = `${gameId}:${modId}`;
+            if (out.has(key) || missing.some(m => m.key === key)) continue;
+            const cached = fileCache.get(key);
+            if (cached && now - cached.at < FILE_CACHE_MS) out.set(key, cached.files);
+            else missing.push({gameId, modId, key});
+        }
+        for (let i = 0; i < missing.length; i += FILES_PER_REQUEST) {
+            const chunk = missing.slice(i, i + FILES_PER_REQUEST);
+            const variables: Record<string, string> = {};
+            const declarations: string[] = [];
+            const fields: string[] = [];
+            chunk.forEach((mod, n) => {
+                variables[`m${n}`] = String(mod.modId);
+                variables[`g${n}`] = String(mod.gameId);
+                declarations.push(`$m${n}: ID!, $g${n}: ID!`);
+                fields.push(`f${n}: modFiles(modId: $m${n}, gameId: $g${n}) { ${NEXUS_FILE_FIELDS} }`);
+            });
+            try {
+                const data = await NexusModsApi.graphql<Record<string, unknown[] | null>>(
+                    `query ModFiles(${declarations.join(', ')}) { ${fields.join(' ')} }`, variables, {partial: true});
+                chunk.forEach((mod, n) => {
+                    const list = data[`f${n}`];
+                    if (!Array.isArray(list)) return;
+                    const files = list.map(toFileInfo).filter((f): f is NexusFileInfo => !!f);
+                    fileCache.set(mod.key, {at: Date.now(), files});
+                    out.set(mod.key, files);
+                });
+            } catch (error) {
+                console.warn('[NexusModsApi] files not read:', error instanceof Error ? error.message : error);
+            }
+        }
+        return out;
+    }
+
+    /** All files on one mod's page; throws when Nexus couldn't be asked */
+    public static async getFileList(domain: string, modId: number, fresh = false): Promise<NexusFileInfo[]> {
+        const gameId = await NexusModsApi.getGameIdForDomain(domain);
+        if (!gameId) throw new Error(`Unknown Nexus game: ${domain}`);
+        if (fresh) fileCache.delete(`${gameId}:${modId}`);
+        const files = (await NexusModsApi.getFilesForMods([{gameId, modId}])).get(`${gameId}:${modId}`);
+        if (!files) throw new Error(`Files of ${domain} mod ${modId} not read`);
+        return files;
+    }
+
+    /**
+     * The mod page's Files tab with one file picked (what the Add Mod window and downloads take).
+     * `separate`: add that file as an entry of its own (an add-on next to the main file).
+     */
+    public static getModFileUrl(domain: string, modId: number, fileId: number, separate = false): string {
+        const url = new URL(NexusModsApi.getModFilesUrl(domain, modId));
+        url.searchParams.set('file_id', String(fileId));
+        if (separate) url.searchParams.set(SEPARATE_PARAM, SEPARATE_VALUE);
+        return url.toString();
+    }
+
+    /** Whether a mod's link is an entry for one file of the page (see getModFileUrl's `separate`) */
+    public static isFileEntryUrl(url: string | undefined): boolean {
+        return !!url && /[?&]file_id=\d+/.test(url) && /nexusmods\.com\//i.test(url);
+    }
+
+    /**
+     * The requirements of the mods shown, in a second small request: asking for them in the
+     * search itself makes Nexus refuse searches ("query has complexity of 17200, which exceeds
+     * max complexity of 10000"), since a search fetches 100 mods at a time. Without them the
+     * cards just show no requirements.
+     */
+    private static async withRequirements(nodes: NexusModsModNode[]): Promise<NexusModsModNode[]> {
+        const wanted = nodes.filter(n => n.modId && (n.gameId || n.game?.id));
+        const CHUNK = 40;
+        for (let i = 0; i < wanted.length; i += CHUNK) {
+            const chunk = wanted.slice(i, i + CHUNK);
+            try {
+                const data = await NexusModsApi.graphql<{ mods?: { nodes?: { modId: number; gameId?: number; modRequirements?: NexusModsModNode['modRequirements'] }[] } }>(
+                    `query ModRequirements($filter: ModsFilter, $count: Int) {
+                        mods(filter: $filter, count: $count) {
+                            nodes {
+                                modId
+                                gameId
+                                modRequirements {
+                                    nexusRequirements { nodes { modId modName url notes externalRequirement gameId } }
+                                    dlcRequirements { notes gameExpansion { name } }
+                                }
+                            }
+                        }
+                    }`,
+                    {
+                        // gameId has to be next to each modId
+                        filter: {
+                            op: 'OR',
+                            filter: chunk.map(n => ({
+                                gameId: [{value: String(n.gameId || n.game?.id), op: 'EQUALS'}],
+                                modId: [{value: String(n.modId), op: 'EQUALS'}],
+                            })),
+                        },
+                        count: chunk.length,
+                    });
+                const byKey = new Map((data.mods?.nodes ?? []).map(r => [`${r.gameId}:${r.modId}`, r.modRequirements]));
+                for (const node of chunk) {
+                    const found = byKey.get(`${node.gameId || node.game?.id}:${node.modId}`);
+                    if (found) node.modRequirements = found;
+                }
+            } catch (error) {
+                console.warn('[NexusModsApi] requirements not read:', error instanceof Error ? error.message : error);
+            }
+        }
+        return nodes;
     }
 
     public static async getModInfo(domain: string, modId: number): Promise<NexusModsV1Mod> {
@@ -362,13 +640,115 @@ export class NexusModsApi {
             mod,
             file,
             sourceUrl: url,
+            category: await NexusModsApi.getModCategory(parsed.domain, parsed.modId),
         };
     }
 
+    /**
+     * The mod's category on Nexus ("User Interface", "Audio"…), shown as its tag. From the
+     * public GraphQL API (no key needed); undefined when Nexus can't be asked.
+     */
+    public static async getModCategory(domain: string, modId: number): Promise<string | undefined> {
+        const key = `${domain}:${modId}`;
+        if (categoryCache.has(key)) return categoryCache.get(key);
+        try {
+            const gameId = await NexusModsApi.getGameIdForDomain(domain);
+            if (!gameId) return undefined;
+            const data = await NexusModsApi.graphql<{ mods?: { nodes?: { modCategory?: { name?: string } | null }[] } }>(
+                `query ModCategory($filter: ModsFilter) { mods(filter: $filter, count: 1) { nodes { modCategory { name } } } }`,
+                {filter: {gameId: [{value: String(gameId), op: 'EQUALS'}], modId: [{value: String(modId), op: 'EQUALS'}]}});
+            const name = data.mods?.nodes?.[0]?.modCategory?.name?.trim() || undefined;
+            categoryCache.set(key, name);
+            return name;
+        } catch (error) {
+            console.warn('[NexusModsApi] category not read:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
+    }
+
+    /**
+     * The name of the mod a Nexus link points to, without messages (the Add Mod window shows it
+     * next to the link). Uses the public API, so it works without a key.
+     */
+    public static async lookupModLink(url: string): Promise<
+        { status: 'found'; name: string } | { status: 'notFound' } | { status: 'invalid' } | { status: 'error'; message: string }> {
+        const parsed = NexusModsApi.parseModLinks(url);
+        if (!parsed) return {status: 'invalid'};
+        const key = `${parsed.domain}:${parsed.modId}`;
+        const cached = modNames.get(key);
+        if (cached) return {status: 'found', name: cached};
+        try {
+            const gameId = await NexusModsApi.getGameIdForDomain(parsed.domain);
+            if (!gameId) return {status: 'notFound'};
+            const data = await NexusModsApi.graphql<{ mods?: { nodes?: { name?: string; modCategory?: { name?: string } | null }[] } }>(
+                `query ModName($filter: ModsFilter) { mods(filter: $filter, count: 1) { nodes { name modCategory { name } } } }`,
+                {filter: {gameId: [{value: String(gameId), op: 'EQUALS'}], modId: [{value: String(parsed.modId), op: 'EQUALS'}]}});
+            const node = data.mods?.nodes?.[0];
+            const name = node?.name ? decodeHtmlEntities(node.name).trim() : '';
+            if (!name) return {status: 'notFound'};
+            modNames.set(key, name);
+            if (node?.modCategory?.name) categoryCache.set(key, node.modCategory.name.trim());
+            return {status: 'found', name};
+        } catch (error) {
+            return {status: 'error', message: error instanceof Error ? error.message : String(error)};
+        }
+    }
+
+    /** Nexus's game id for a domain ("deeprockgalactic" → 3671), cached */
+    private static async getGameIdForDomain(domain: string): Promise<number | undefined> {
+        if (gameIds.has(domain)) return gameIds.get(domain);
+        const data = await NexusModsApi.graphql<{ game?: { id?: number } | null }>(
+            `query GameId($domainName: String!) { game(domainName: $domainName) { id } }`, {domainName: domain});
+        const id = Number(data.game?.id) || undefined;
+        if (id) gameIds.set(domain, id);
+        return id;
+    }
+
+    /**
+     * The mod as Nexus has it now, for the file this entry follows: an entry for one file (its link
+     * names the file), a file picked for the mod, or the file it last downloaded. Newer uploads of
+     * that file count as its updates; another file of the page (e.g. a version in another
+     * language) never does. Without any of these: the page's main download, as before.
+     */
     public static async refreshResolvedMod(mod: CompleteModData): Promise<NexusModsResolvedMod | null> {
         const parsed = NexusModsApi.parseModLinks(mod.url || '');
         if (!parsed) return null;
-        return await NexusModsApi.getModInfoByLink(NexusModsApi.getModUrl(parsed.domain, parsed.modId));
+        const {domain, modId} = parsed;
+        const entryFileId = parsed.fileId;
+        const choice = entryFileId ? undefined : await NexusFileChoice.get(domain, modId);
+        const ownFileId = entryFileId ?? choice?.fileId
+            ?? fileIdOfDownload(mod.download?.cachePath, domain, modId)
+            ?? NexusModsApi.parseModLinks(mod.download?.downloadUrl || '')?.fileId;
+        const mainDownload = () => NexusModsApi.getModInfoByLink(NexusModsApi.getModUrl(domain, modId));
+        if (!ownFileId && !choice) return await mainDownload();
+        let fileId = entryFileId ?? choice?.fileId;
+        try {
+            const next = trackedFile(await NexusModsApi.getFileList(domain, modId), ownFileId, choice, !!entryFileId);
+            if (next) fileId = next.fileId;
+        } catch (error) {
+            console.warn('[NexusModsApi] file not followed:', error instanceof Error ? error.message : error);
+        }
+        if (!fileId) return await mainDownload();
+        return await NexusModsApi.getModInfoByLink(NexusModsApi.getModFileUrl(domain, modId, fileId));
+    }
+
+    /** Read the files of these Nexus mods in as few requests as possible (before an update check) */
+    public static async prefetchFiles(mods: { url?: string }[]): Promise<void> {
+        const byDomain = new Map<string, number[]>();
+        for (const mod of mods) {
+            const parsed = NexusModsApi.parseModLinks(mod.url || '');
+            if (parsed) byDomain.set(parsed.domain, [...(byDomain.get(parsed.domain) ?? []), parsed.modId]);
+        }
+        for (const [domain, ids] of byDomain) {
+            try {
+                const gameId = await NexusModsApi.getGameIdForDomain(domain);
+                if (!gameId) continue;
+                for (const id of ids) fileCache.delete(`${gameId}:${id}`);
+                await NexusModsApi.getFilesForMods(ids.map(modId => ({gameId, modId})));
+            } catch (error) {
+                console.warn('[NexusModsApi] files not prefetched:', error instanceof Error ? error.message : error);
+            }
+        }
     }
 
     public static async downloadModFile(
@@ -503,16 +883,28 @@ export class NexusModsApi {
         return value;
     }
 
-    private static async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-        const response = await NexusModsApi.requestJson<GraphqlResponse<T>>(NEXUSMODS_GRAPHQL_URL, {
+    /** `partial`: give what Nexus answered even when part of the query failed (e.g. one mod of many) */
+    private static async graphql<T>(query: string, variables: Record<string, unknown>, options: { partial?: boolean } = {}): Promise<T> {
+        const send = (withoutKey: boolean) => NexusModsApi.requestJson<GraphqlResponse<T>>(NEXUSMODS_GRAPHQL_URL, {
             method: 'POST',
             body: JSON.stringify({ query, variables }),
             isFullUrl: true,
+            withoutKey,
         });
+        let response: GraphqlResponse<T>;
+        try {
+            response = await send(false);
+        } catch (error) {
+            // Searching works without a key: a key Nexus rejects (expired, mistyped) shouldn't
+            // leave Browse Mods empty
+            if (!NexusModsApi.isAuthenticationRequiredError(error) || !(await NexusModsApi.getApiKey())) throw error;
+            console.warn('[NexusModsApi] API key not accepted; searching without it');
+            response = await send(true);
+        }
         if (response.errors?.length) {
             const errorMessage = response.errors.map((error) => error.message).filter(Boolean).join('; ') || 'Nexus Mods GraphQL error';
             console.warn('[NexusModsApi] GraphQL errors:', errorMessage);
-            throw new Error(errorMessage);
+            if (!options.partial || !response.data) throw new Error(errorMessage);
         }
         return response.data ?? ({} as T);
     }
@@ -522,18 +914,34 @@ export class NexusModsApi {
         options: {
             method?: string;
             body?: string;
+            /** Sent as a form (what the v1 write calls take) instead of `body` */
+            form?: Record<string, string>;
+            /** Statuses that count as done (e.g. 404 when removing something that isn't there) */
+            allowStatus?: number[];
+            /** Don't send the API key (public data) */
+            withoutKey?: boolean;
             isFullUrl?: boolean;
             parseAsResponse?: boolean;
         } = {},
     ): Promise<T> {
         const headers = await NexusModsApi.getHeaders();
+        if (options.withoutKey) delete headers.apikey;
+        let body = options.body;
+        if (options.form) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            body = new URLSearchParams(options.form).toString();
+        }
         const url = options.isFullUrl ? pathOrUrl : `${NEXUSMODS_API_BASE_URL}${pathOrUrl}`;
         const result = await NetworkApi.request<Response>({
             service: 'nexusmods.request',
             url,
             method: options.method ?? 'GET',
             headers,
-            body: options.body,
+            body,
+            // the Nexus API is often slower than the 5 s default (files lists of mods with many
+            // files, busy hours): update checks of several mods timed out and those mods were skipped
+            timeoutMs: NEXUS_TIMEOUT_MS,
+            retry: {maxTry: 2, delayMs: 1000},
             proxyPolicy: 'mintcatProxyFallback',
             parseAs: 'response',
         });
@@ -542,6 +950,9 @@ export class NexusModsApi {
         if (options.parseAsResponse) {
             return response as T;
         }
+        if (!response.ok && options.allowStatus?.includes(response.status)) {
+            return {} as T;
+        }
         if (!response.ok) {
             const message = await response.text().catch(() => '');
             if (response.status === 401) {
@@ -549,7 +960,9 @@ export class NexusModsApi {
             }
             throw new Error(`Nexus Mods API ${response.status}: ${message || response.statusText}`);
         }
-        return await response.json() as T;
+        // some write calls answer with an empty body
+        const text = await response.text();
+        return (text.trim() ? JSON.parse(text) : {}) as T;
     }
 
     private static async getHeaders(): Promise<Record<string, string>> {
@@ -583,6 +996,8 @@ export class NexusModsApi {
                 return [{ downloads: { direction } }];
             case 'rating':
                 return [{ endorsements: { direction } }];
+            case 'created':
+                return [{ createdAt: { direction } }];
             case 'date':
             default:
                 return [{ updatedAt: { direction } }];

@@ -122,6 +122,23 @@
 /* 统计信息 */
 .search-result-card-stats {
     margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.search-result-card-stats .support-buttons .ant-btn {
+    color: #999;
+}
+
+.search-result-card-stats .support-buttons .ant-btn.support-on {
+    color: var(--ant-color-primary);
+}
+
+.search-result-card-stats .support-buttons .ant-btn.support-on.support-down {
+    color: var(--ant-color-error);
 }
 
 .search-result-card-stat {
@@ -243,4 +260,110 @@
         #2a2a2a 75%
     );
     background-size: 200% 100%;
+}
+
+/* "In your list" mark next to the title */
+.search-result-card-listed {
+    margin-inline-start: 4px;
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+}
+
+/* Requirements / author notes / support buttons under the description */
+.search-result-card-extra {
+    margin-top: 4px;
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+}
+
+.search-result-req {
+    margin-inline-end: 0;
+    font-size: 11px;
+    line-height: 18px;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.search-result-req-link {
+    cursor: pointer;
+}
+
+.search-result-notes {
+    max-width: 420px;
+    max-height: 320px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+.search-result-notes-mentions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.search-result-notes-link {
+    font-size: 12px;
+}
+
+/* "Files:" line: a mod with more than one file to choose from */
+.search-result-file {
+    max-width: 320px;
+}
+
+.search-result-file-meta {
+    opacity: 0.65;
+}
+
+.search-result-file-tip {
+    max-width: 380px;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.search-result-file-tip-text {
+    white-space: pre-wrap;
+    opacity: 0.85;
+    max-height: 160px;
+    overflow: hidden;
+}
+
+.search-result-file-tip-hint {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+.search-result-file-choice-text {
+    font-size: 12px;
+    opacity: 0.7;
+    white-space: pre-wrap;
+    margin-top: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* file picker: the box at the first line of a long entry */
+.search-result-file-choice.ant-checkbox-wrapper {
+    align-items: flex-start;
+}
+
+.search-result-file-choice .ant-checkbox {
+    margin-top: 3px;
+    align-self: flex-start;
 }

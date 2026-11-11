@@ -15,6 +15,9 @@ import {
 } from "@/services/HomeService.ts";
 import type {ModInfo} from "@/apis/modio/ModInfo.ts";
 import {NexusModsApi, showNexusModsApiKeyRequiredMessage} from "@/apis/nexusmods";
+import {Downloads} from "@/services/Downloads";
+import {logActivity, nameList} from "@/services/ActivityLog";
+import {StorageAPI} from "@/storage";
 
 /**
  * HomeViewModel handles mod operations and business logic
@@ -27,18 +30,29 @@ export class HomeViewModel extends BaseViewModel {
         super();
     }
 
+    /** A mod's name for the Log */
+    private async modName(modId: number): Promise<string> {
+        try {
+            const mod = await (await StorageAPI.getMods()).getModById(modId);
+            return mod?.displayName || mod?.originalName || `#${modId}`;
+        } catch {
+            return `#${modId}`;
+        }
+    }
+
     public async addModFromUrl(url: string, groupId: number): Promise<AddModFromUrlResult> {
         await StatusBar.log(t("Fetch Mod Info"), 'info');
         try {
             return await this.homeService.addModFromUrl(url, groupId);
         } catch (error) {
             console.error('Failed to add mod from URL:', error);
+            const reason = error instanceof Error ? error.message : String(error);
             if (NexusModsApi.isAuthenticationRequiredError(error)) {
                 showNexusModsApiKeyRequiredMessage();
-                return { status: "invalid" };
+                return { status: "invalid", error: reason };
             }
             message.error(t("error.addModToDatabase"));
-            return { status: "invalid" };
+            return { status: "invalid", error: reason };
         }
     }
 
@@ -58,10 +72,11 @@ export class HomeViewModel extends BaseViewModel {
         }
     }
 
-    public async addModsFromSubscribed(modInfos: ModInfo[], groupId: number): Promise<BatchAddModResult> {
+    public async addModsFromSubscribed(modInfos: ModInfo[], groupId: number,
+                                       folderOf?: (modInfo: ModInfo) => number): Promise<BatchAddModResult> {
         await StatusBar.log(t("Fetch Mod Info"), 'info');
         try {
-            return await this.homeService.addModsFromSubscribed(modInfos, groupId);
+            return await this.homeService.addModsFromSubscribed(modInfos, groupId, folderOf);
         } catch (error) {
             console.error('Failed to batch add subscribed mods:', error);
             message.error(t("error.addModToDatabase"));
@@ -70,11 +85,39 @@ export class HomeViewModel extends BaseViewModel {
     }
 
     public async removeMod(id: number): Promise<void> {
+        const name = await this.modName(id);
         await this.homeService.removeModFromActiveProfile(id);
+        await logActivity('info', t("log.list.removed", {name}), undefined, 'list');
+        // its downloads go too when "Downloads of removed mods: delete" is chosen
+        await Downloads.afterRemove([id]);
+    }
+
+    /** Remove several mods with one Log line (names looked up in one go) */
+    public async removeMods(ids: number[]): Promise<void> {
+        if (ids.length === 0) return;
+        if (ids.length === 1) return this.removeMod(ids[0]);
+        const names = await this.modNames(ids);
+        await this.homeService.removeModsFromActiveProfile(ids);
+        // their downloads go too when "Downloads of removed mods: delete" is chosen
+        await Downloads.afterRemove(ids);
+        await logActivity('info', t("log.list.removedMany", {count: ids.length}), nameList(names), 'list');
+    }
+
+    /** Display names of several mods in one query */
+    private async modNames(ids: number[]): Promise<string[]> {
+        try {
+            const mods = await (await StorageAPI.getMods()).getBatchCompleteModDataOptimized(ids);
+            const byId = new Map(mods.map(m => [m.modId, m.displayName || m.originalName || `#${m.modId}`]));
+            return ids.map(id => byId.get(id) ?? `#${id}`);
+        } catch {
+            return ids.map(id => `#${id}`);
+        }
     }
 
     public async setDisplayName(id: number, name: string): Promise<void> {
+        const before = await this.modName(id);
         await this.homeService.updateModDisplayName(id, name);
+        await logActivity('info', t("log.list.renamed", {from: before, to: name}), undefined, 'list');
     }
     /**
      * 设置 mod 启用状态
@@ -84,13 +127,20 @@ export class HomeViewModel extends BaseViewModel {
      */
     public async setModEnabled(modId: number, enable: boolean, profileModId?: number): Promise<void> {
         await this.homeService.setModEnabled(modId, enable, profileModId);
+        await logActivity('info', t(enable ? "log.list.enabled" : "log.list.disabled", {name: await this.modName(modId)}), undefined, 'list');
     }
 
     /**
      * 批量设置 mod 启用状态（单条 SQL）
      */
-    public async batchSetModEnabled(modIds: number[], enable: boolean): Promise<void> {
+    /** @param log false when the caller writes its own Log line */
+    public async batchSetModEnabled(modIds: number[], enable: boolean, log = true): Promise<void> {
         await this.homeService.batchSetModEnabled(modIds, enable);
+        if (!log || modIds.length === 0) return;
+        // The Log line in the background: the list shouldn't wait for the name lookup
+        void this.modNames(modIds)
+            .then(names => logActivity('info', t(enable ? "log.list.enabledMany" : "log.list.disabledMany", {count: modIds.length}), nameList(names), 'list'))
+            .catch(() => undefined);
     }
 
     public async setModUsedVersion(profileModId: number, version: string): Promise<void> {
@@ -99,7 +149,10 @@ export class HomeViewModel extends BaseViewModel {
 
     public async setGroupName(id: number, name: string): Promise<void> {
         const treeViewModel = await IoC.get(TreeViewModel);
+        // the old name, before it changes
+        const before = await treeViewModel.getGroupName(id).catch(() => undefined);
         await treeViewModel.setGroupName(id, name);
+        await logActivity('info', t("log.list.folderRenamed", {from: before ?? "", to: name}), undefined, 'list');
     }
 
     public async getGroupName(id: number): Promise<string | undefined> {
@@ -109,14 +162,18 @@ export class HomeViewModel extends BaseViewModel {
 
     public async addGroup(parentGroupId: number, groupName: string): Promise<void> {
         await this.homeService.addGroup(parentGroupId, groupName);
+        const parent = parentGroupId ? await this.getGroupName(parentGroupId) : undefined;
+        await logActivity('info', parent ? t("log.list.subfolderAdded", {name: groupName, parent}) : t("log.list.folderAdded", {name: groupName}), undefined, 'list');
     }
 
     public async removeGroup(groupId: number): Promise<void> {
         console.log(`[HomeViewModel] removeGroup called with groupId=${groupId}`);
 
 
+        const name = await this.getGroupName(groupId).catch(() => undefined);
         try {
             await this.homeService.removeGroup(groupId);
+            await logActivity('info', t("log.list.folderDeleted", {name: name ?? `#${groupId}`}), undefined, 'list');
         } catch (error) {
             if (error instanceof LastGroupCannotDeleteError) {
                 throw error;
@@ -131,7 +188,9 @@ export class HomeViewModel extends BaseViewModel {
      * @returns 清理的 mod 数量
      */
     public async cleanMissingLocalMods(): Promise<number> {
-        return await this.homeService.cleanMissingLocalMods();
+        const count = await this.homeService.cleanMissingLocalMods();
+        await logActivity('info', t("log.list.cleanedMissing", {count}), undefined, 'list');
+        return count;
     }
 
     /**

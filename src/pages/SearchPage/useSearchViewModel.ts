@@ -1,6 +1,6 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
 import {SearchViewModel, SearchState, SearchSortBy, SearchSortOrder, getSearchViewModel} from './SearchViewModel';
-import {SearchSource} from '@/apis/search';
+import {type SearchSourceKey} from '@/apis/search';
 
 /**
  * 自定义 Hook：使用 SearchViewModel
@@ -57,6 +57,10 @@ export function useSearchViewModel() {
         return viewModelRef.current?.loadInitial();
     }, []);
 
+    const resumeOrLoad = useCallback(() => {
+        return viewModelRef.current?.resumeOrLoad();
+    }, []);
+
     // 加载更多
     const loadMore = useCallback(() => {
         return viewModelRef.current?.loadMore();
@@ -73,8 +77,8 @@ export function useSearchViewModel() {
     }, []);
 
     // 切换搜索源
-    const switchSource = useCallback((source: SearchSource) => {
-        return viewModelRef.current?.switchSource(source);
+    const switchSource = useCallback((source: SearchSourceKey, sort?: { sortBy: SearchSortBy; sortOrder: SearchSortOrder }) => {
+        return viewModelRef.current?.switchSource(source, sort);
     }, []);
 
     // 翻译项目
@@ -117,6 +121,7 @@ export function useSearchViewModel() {
         search,
         searchImmediate,
         loadInitial,
+        resumeOrLoad,
         loadMore,
         refresh,
         reset,
