@@ -14,7 +14,8 @@ import {dragAndDrop} from "./DragAndDropTree";
 import {DragAutoScroll} from "./DragAutoScroll";
 import {gatherAround, groupSpread, leavesInOrder, moveGroupToPosition, moveToPosition} from "./TreeMoves";
 import {dissolveFolders, folderKeysInOrder, folderPath, moveFoldersInto, pickedFolders, topmost, withSubfolders} from "./FolderOps";
-import {MessageBox} from "@/components/MessageBox";
+import {askBeforeMoving} from "@/dialogs/MoveConfirmDialog";
+import {movedLines, placesOf} from "./MoveSummary";
 import {logActivity, nameList} from "@/services/ActivityLog";
 import {t} from "i18next";
 import { IoC } from "@/core/IoC";
@@ -176,19 +177,26 @@ export class TreeView extends React.Component<TreeViewProps> {
     }
 
     /**
-     * Before moving picked mods from several folders together: ask when it's many of them or some
+     * Picked mods from several folders moving together: a note when it's many of them or some
      * can't be seen (e.g. after Ctrl+A), as they all end up in one place and there is no undo
      */
-    private async confirmGroupMove(group: string[]): Promise<boolean> {
+    private groupMoveWarning(group: string[] | null): string | null {
+        if (!group) return null;
         const {folders, hidden} = groupSpread(this.props.treeData as any[], group, this.props.expandedKeys ?? []);
-        if (folders < 2 || (group.length <= 20 && hidden === 0)) return true;
-        return await MessageBox.confirm({
-            title: t("list.moveGroupConfirmTitle", {count: group.length}),
-            content: hidden > 0
-                ? t("list.moveGroupConfirmHidden", {count: group.length, folders, hidden})
-                : t("list.moveGroupConfirm", {count: group.length, folders}),
-            okText: t("list.moveGroupConfirmOk"),
-        });
+        if (folders < 2 || (group.length <= 20 && hidden === 0)) return null;
+        return hidden > 0
+            ? t("list.moveGroupConfirmHidden", {count: group.length, folders, hidden})
+            : t("list.moveGroupConfirm", {count: group.length, folders});
+    }
+
+    /**
+     * Before saving a move: "Ask before moving" (Settings) shows where each goes; without it only
+     * a big group move asks. `before` is where they were, `treeAfter` the tree after the move.
+     */
+    private async askMove(before: ReturnType<typeof placesOf>, treeAfter: any[], group: string[] | null): Promise<boolean> {
+        const lines = movedLines(before, placesOf(treeAfter, [...before.keys()]));
+        return askBeforeMoving(lines, this.groupMoveWarning(group),
+            group ? t("list.moveGroupConfirmTitle", {count: group.length}) : undefined);
     }
 
     /** Dragging one of several picked mods: show how many go along */
@@ -352,7 +360,9 @@ export class TreeView extends React.Component<TreeViewProps> {
         };
 
         const pathBefore = folderPathOf(treeData, sourceKey);
+        const placesBefore = placesOf(treeData, [sourceKey]);
         const dragTreeData = dragAndDrop(mockInfo, treeData);
+        if (!(await this.askMove(placesBefore, dragTreeData, null))) return;
 
         try {
             const profileTreeItem = converter.convertFrom(dragTreeData);
@@ -393,11 +403,12 @@ export class TreeView extends React.Component<TreeViewProps> {
 
         // one of several picked mods: they all go, in their order
         const group = single ? null : this.groupOf(sourceKey);
-        if (group && !(await this.confirmGroupMove(group))) return false;
+        const placesBefore = placesOf(treeData, group ?? [sourceKey]);
         const folders = group
             ? moveGroupToPosition(treeData, order, group, position)
             : moveToPosition(treeData, order, sourceKey, position);
         if (!folders) return false;
+        if (!(await this.askMove(placesBefore, treeData, group))) return false;
         const shownKey = group ? group[0] : sourceKey;
 
         try {
@@ -456,8 +467,6 @@ export class TreeView extends React.Component<TreeViewProps> {
     @autoBind
     private async onDrop(info: any) {
         this.autoScroll.stop();
-        const dropGroup = info.dragNode?.isLeaf ? this.groupOf(String(info.dragNode.key)) : null;
-        if (dropGroup && !(await this.confirmGroupMove(dropGroup))) return;
         await IoC.get(TreeViewModel);
         const profileVM = await IoC.get(ProfileViewModel);
         const activeRoot = await profileVM.getActiveProfileTreeRoot();
@@ -493,8 +502,10 @@ export class TreeView extends React.Component<TreeViewProps> {
         const pathBefore = folderPathOf(treeData, dragKey);
         // one of several picked mods was dragged: the others come along, keeping their order
         const group = info.dragNode?.isLeaf ? this.groupOf(dragKey) : null;
+        const placesBefore = placesOf(treeData, group ?? [dragKey]);
         const dragTreeData = dragAndDrop(info, treeData);
         if (group) gatherAround(dragTreeData, group, dragKey);
+        if (!(await this.askMove(placesBefore, dragTreeData, group))) return;
 
         try {
             const profileTreeItem = converter.convertFrom(dragTreeData);
@@ -618,13 +629,15 @@ export class TreeView extends React.Component<TreeViewProps> {
      * Move folders into another folder (or to the top level: `target` null), with everything in
      * them. False when that's not possible (the target is one of them or inside one).
      */
-    public async moveFolders(keys: string[], target: string | null): Promise<boolean> {
+    public async moveFolders(keys: string[], target: string | null): Promise<boolean | 'cancelled'> {
         const {treeData, converter} = await this.fullTree();
         const titles = new Map(keys.map(k => [k, titleOf(treeData, k)]));
         const before = TreeView.pathsOf(treeData);
+        const placesBefore = placesOf(treeData, keys);
         const moved = moveFoldersInto(treeData, keys, target);
         if (!moved) return false;
         if (moved.length === 0) return true;
+        if (!(await this.askMove(placesBefore, treeData, null))) return 'cancelled';
         if (!(await this.saveTree(treeData, converter, before))) return false;
         // the folders that moved (their subfolders went along)
         await logActivity('info', t("log.list.foldersMoved", {count: moved.length, folder: target ? titleOf(treeData, target) : t("log.list.topLevel")}),

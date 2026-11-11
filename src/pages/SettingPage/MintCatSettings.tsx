@@ -30,6 +30,7 @@ import {
     type Ue4ssSetting,
 } from "@/utils/Ue4ssSetting.ts";
 import {confirmDelete, DeleteConfirm} from "@/services/DeleteConfirm";
+import {MoveConfirm} from "@/services/MoveConfirm";
 
 
 
@@ -55,6 +56,7 @@ export function MintCatSettings() {
     const [releaseChannel, setReleaseChannel] = React.useState<ReleaseChannel>(DEFAULT_RELEASE_CHANNEL);
     const descriptionHover = React.useSyncExternalStore(ModDescriptions.subscribe, ModDescriptions.isEnabled);
     const askBeforeDeleting = React.useSyncExternalStore(DeleteConfirm.subscribe, DeleteConfirm.isEnabled);
+    const askBeforeMoving = React.useSyncExternalStore(MoveConfirm.subscribe, MoveConfirm.isEnabled);
     const lookVersion = React.useSyncExternalStore(ModListAppearance.subscribe, ModListAppearance.version);
     const advanced = useAdvancedShown();
     const look = ModListAppearance.get(lookVersion);
@@ -330,6 +332,10 @@ export function MintCatSettings() {
                     <Form.Item label={t("deleteConfirm.setting")} tooltip={t("help.confirmDelete")}>
                         <Switch checked={askBeforeDeleting}
                                 onChange={(checked) => void DeleteConfirm.setEnabled(checked)}/>
+                    </Form.Item>
+                    <Form.Item label={t("moveConfirm.setting")} tooltip={t("help.confirmMove")}>
+                        <Switch checked={askBeforeMoving}
+                                onChange={(checked) => void MoveConfirm.setEnabled(checked)}/>
                     </Form.Item>
                     <Form.Item label={t("modDescription.setting")} tooltip={t("help.descriptionHover")}>
                         <Switch checked={descriptionHover}

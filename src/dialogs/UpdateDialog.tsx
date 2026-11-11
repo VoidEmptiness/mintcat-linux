@@ -71,6 +71,11 @@ class UpdateDialog extends React.Component<any, any> {
     }
 
     componentDidMount() {
+        // MINTCAT Linux+ builds (they carry a build number) get their updates from the GitHub fork
+        // (e.g. through Shelly). This check asks the original Windows MINTCAT's update server,
+        // which would offer a build without the Linux+ changes, and it logs an error on every
+        // start when that server doesn't answer.
+        if (import.meta.env.VITE_APP_BUILD) return;
         check().then((update) => {
             if (update) {
                 this.update = update;

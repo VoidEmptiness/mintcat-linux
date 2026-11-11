@@ -60,9 +60,11 @@ function formatDate(iso: string): string {
     return Number.isFinite(time) ? new Date(time).toLocaleString() : "";
 }
 
-function AddForm({files, initial, folders, initialFolderId, onChange}: {
+function AddForm({files, initial, folders, initialFolderId, onChange, clicked = false}: {
     files: RepositoryFile[];
     initial: number[];
+    /** A file was clicked on the Browse Mods card (only it is ticked) */
+    clicked?: boolean;
     folders: FolderOption[];
     initialFolderId: number;
     onChange: (indexes: number[], folderId: number, newFolder: NewFolder | null) => void;
@@ -106,7 +108,7 @@ function AddForm({files, initial, folders, initialFolderId, onChange}: {
             </Flex>
             {files.length > 1
                 ? <Flex vertical gap={6} style={{maxHeight: 320, overflowY: "auto"}}>
-                    <Typography.Text type="secondary" style={{fontSize: 12}}>{t("repo.chooseFilesHint")}</Typography.Text>
+                    <Typography.Text type="secondary" style={{fontSize: 12}}>{t(clicked ? "repo.chooseFilesHintClicked" : "repo.chooseFilesHint")}</Typography.Text>
                     {files.map((file, index) => (
                         <Checkbox key={index}
                                   checked={selected.includes(index)}
@@ -136,9 +138,12 @@ function AddForm({files, initial, folders, initialFolderId, onChange}: {
 }
 
 /** Ask which file(s) to add and into which folder of the mod list */
-async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], folders: FolderOption[])
+async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], folders: FolderOption[], onlyFileUrl?: string)
     : Promise<{ files: RepositoryFile[]; folderId: number; newFolder: NewFolder | null } | null> {
-    const initial = files.length === 1 ? [0] : files.map((f, i) => (f.latest ? i : -1)).filter(i => i >= 0);
+    // a file clicked on the Browse Mods card: just that one ticked
+    const clicked = onlyFileUrl ? files.findIndex(f => f.downloadUrl === onlyFileUrl) : -1;
+    const initial = clicked >= 0 ? [clicked]
+        : files.length === 1 ? [0] : files.map((f, i) => (f.latest ? i : -1)).filter(i => i >= 0);
     let selection = initial;
     let folderId = initialFolder(folders);
     let newFolder: NewFolder | null = null;
@@ -147,7 +152,7 @@ async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], fo
         icon: null,
         width: 560,
         okText: t("repo.addToList"),
-        content: <AddForm files={files} initial={initial} folders={folders} initialFolderId={folderId}
+        content: <AddForm files={files} initial={initial} folders={folders} initialFolderId={folderId} clicked={clicked >= 0}
                           onChange={(s, f, n) => {
                               selection = s;
                               folderId = f;
@@ -167,7 +172,8 @@ async function chooseFilesAndFolder(modName: string, files: RepositoryFile[], fo
     };
 }
 
-export async function addRepositoryMod(item: SearchResultItem): Promise<boolean> {
+/** `onlyFileUrl`: a file clicked on the Browse Mods card (only that one is ticked at first) */
+export async function addRepositoryMod(item: SearchResultItem, onlyFileUrl?: string): Promise<boolean> {
     const raw = item.rawData as RepositoryResultData | undefined;
     const repo = raw ? await RepositoryStore.get(raw.repositoryId) : undefined;
     if (!raw || !repo) {
@@ -201,7 +207,7 @@ export async function addRepositoryMod(item: SearchResultItem): Promise<boolean>
     }
 
     const title = files.filter(f => f.latest).map(f => f.filename).join(", ") || item.name;
-    const choice = await chooseFilesAndFolder(title, files, folders);
+    const choice = await chooseFilesAndFolder(title, files, folders, onlyFileUrl);
     if (!choice || choice.files.length === 0) {
         return false;
     }

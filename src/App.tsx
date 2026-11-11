@@ -31,6 +31,8 @@ import {MintImportDialog} from "@/dialogs/MintImportDialog";
 import {useFileDrop} from "@/hooks/useFileDrop";
 import {ModDescriptions} from "@/services/ModDescriptions";
 import {DeleteConfirm} from "@/services/DeleteConfirm";
+import {MoveConfirm} from "@/services/MoveConfirm";
+import {NexusFileChoice} from "@/services/NexusFileChoice";
 import {ModListAppearance} from "@/services/ModListAppearance";
 import {FolderColorDialog} from "@/dialogs/FolderColorDialog";
 import {IconPickerDialog} from "@/dialogs/IconPickerDialog";
@@ -122,6 +124,8 @@ const AppContent = () => {
                 logStartup().catch(console.error);
                 ModDescriptions.init().catch(console.error);
                 DeleteConfirm.init().catch(console.error);
+                MoveConfirm.init().catch(console.error);
+                NexusFileChoice.init().catch(console.error);
                 ModListAppearance.init().catch(console.error);
                 // logs of launches beyond the number kept (Settings) go now
                 AppLogs.prune().catch(e => console.warn('[App] old logs not pruned', e));

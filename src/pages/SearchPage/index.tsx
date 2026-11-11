@@ -15,6 +15,8 @@ import Search from 'antd/es/input/Search';
 import {t} from 'i18next';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {SearchResultCard} from './SearchResultCard';
+import {askNexusFile, nexusChoiceOf, nexusFilesOf, type FilePick} from './CardFiles';
+import {isChosenFile} from '@/apis/nexusmods/files';
 import {useSearchViewModel} from './useSearchViewModel';
 import type {SearchSortBy, SearchSortOrder} from './SearchViewModel';
 import {
@@ -345,8 +347,21 @@ export function SearchPage() {
         }
     }, []);
 
-    const handleAdd = useCallback(async (item: SearchResultItem) => {
+    const handleAdd = useCallback(async (item: SearchResultItem, pick?: FilePick) => {
         try {
+            // a Nexus mod with more than one file: which one (unless one was clicked on the card)
+            let nexusFileId = pick?.nexusFileId;
+            if (!nexusFileId && item.source === SearchSource.NEXUSMODS) {
+                const files = nexusFilesOf(item);
+                if (files.length > 0) {
+                    const choice = nexusChoiceOf(item);
+                    const initial = files.find(f => isChosenFile(f, choice)) ?? files[0];
+                    const answer = await askNexusFile(item.nameTrans || item.name, files, initial.fileId);
+                    if (answer === null) return;
+                    nexusFileId = answer;
+                }
+            }
+
             // Mods it needs (Nexus page requirements; what a Pak Hub post names): ask which to add too
             let extras: ResolvedRequirement[] = [];
             let plan: RequirementPlan | null = null;
@@ -375,11 +390,15 @@ export function SearchPage() {
             const links: string[] = [];
             if (isRepositorySource(item.source)) {
                 // its files chosen and added first; cancelled there: nothing else is added either
-                if (!await addRepositoryMod(item)) return;
+                if (!await addRepositoryMod(item, pick?.repoFileUrl)) return;
             } else if (item.source === SearchSource.NEXUSMODS) {
                 const node = item.rawData as NexusModsModNode | undefined;
                 const gameId = node?.gameId || Number(node?.game?.id) || undefined;
-                const link = await nexusAddLink(item.profileUrl, gameId);
+                const parsed = NexusModsApi.parseModLinks(item.profileUrl);
+                const pageUrl = nexusFileId && parsed
+                    ? NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, nexusFileId)
+                    : item.profileUrl;
+                const link = await nexusAddLink(pageUrl, gameId);
                 if (!link) {
                     message.info(t('nexusmods.windowClosed'));
                     return;

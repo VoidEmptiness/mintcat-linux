@@ -596,7 +596,11 @@ export class ModUpdateService {
                 && !!dto.download.fileSize
                 && existingDownload.fileSize !== dto.download.fileSize;
             const keepCachedFile = !versionChanged && !fileSizeChanged && !!existingDownload?.cachePath;
-            const downloadUrl = NexusModsApi.hasReusableDownloadCredential(existingDownload?.downloadUrl)
+            // a download link from before is for that file: not reused once a newer upload is out
+            const oldFileId = NexusModsApi.parseModLinks(existingDownload?.downloadUrl || '')?.fileId;
+            const newFileId = NexusModsApi.parseModLinks(dto.download.downloadUrl || '')?.fileId;
+            const sameFile = !versionChanged && !fileSizeChanged && (!oldFileId || !newFileId || oldFileId === newFileId);
+            const downloadUrl = sameFile && NexusModsApi.hasReusableDownloadCredential(existingDownload?.downloadUrl)
                 ? existingDownload?.downloadUrl
                 : dto.download.downloadUrl;
 

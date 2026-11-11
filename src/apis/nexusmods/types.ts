@@ -74,6 +74,8 @@ export interface NexusModsModNode {
     updatedAt?: string;
     game?: NexusModsGameRef;
     uploader?: NexusModsUserRef;
+    /** The files the page lists now, main download first (filled in after a search) */
+    files?: import('./files').NexusFileInfo[];
 }
 
 export interface NexusModsSearchResult {

@@ -40,6 +40,8 @@ import {emitEvent, listenEvent, type UnlistenFn} from "@/events";
 import {AddModType} from "@/dialogs/AddModDialog";
 import {SearchBox} from "@/pages/HomePage/SearchBox.tsx";
 import {filterStoresStamp} from "@/services/ModFilterProbe";
+import {askBeforeMoving} from "@/dialogs/MoveConfirmDialog";
+import {movedLines, placesOf} from "./MoveSummary";
 import {StorageAPI} from "@/storage";
 import {Downloads} from "@/services/Downloads";
 import type {CompleteModData} from "@/storage/dao/ModDAO";
@@ -1111,6 +1113,8 @@ export class HomePage extends BasePage<any, ModListPageState> {
             const full = (converter.convertToFromRoot(activeRoot) ?? []) as any[];
             TreeViewConverter.filterList = filterList;
 
+            // where they are now (before taking them out below), for "Ask before moving"
+            const placesBefore = placesOf(full, [...selected]);
             const picked: any[] = [];
             const strip = (list: any[]): any[] => list.filter(node => {
                 if (selected.has(String(node.key))) {
@@ -1132,6 +1136,8 @@ export class HomePage extends BasePage<any, ModListPageState> {
             const target = findFolder(rest);
             if (!target || picked.length === 0) return;
             target.children = [...picked, ...(target.children ?? [])];
+            // "Ask before moving" (Settings): show where they go first
+            if (!(await askBeforeMoving(movedLines(placesBefore, placesOf(rest, [...placesBefore.keys()]))))) return;
 
             const profileTreeItem = converter.convertFrom(rest);
             if (!profileTreeItem || profileTreeItem.children.length === 0) return;
@@ -1540,6 +1546,7 @@ export class HomePage extends BasePage<any, ModListPageState> {
 
     private async moveFoldersTo(keys: string[], target: string | null) {
         const ok = await this.treeViewRef.current?.moveFolders(keys, target);
+        if (ok === 'cancelled') return;
         if (ok === false) {
             message.warning(t("folders.cantMoveInside"));
             return;
@@ -1992,9 +1999,22 @@ export class HomePage extends BasePage<any, ModListPageState> {
                 sameFolder.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
                 const idx = sameFolder.findIndex((m) => m.modId === id);
                 if (idx <= 0) break;
+                const tree = this.treeViewRef.current;
+                const key = `mod-${id}`;
+                const placesBefore = tree ? placesOf((await tree.fullTree()).treeData, [key]) : null;
                 const reordered = [sameFolder[idx], ...sameFolder.slice(0, idx), ...sameFolder.slice(idx + 1)];
                 for (let i = 0; i < reordered.length; i++) {
                     await profilesApi.updateProfileMod(reordered[i].id!, { sortOrder: i });
+                }
+                // "Ask before moving": the list is redrawn only after the answer; Cancel puts the old order back
+                if (tree && placesBefore) {
+                    const lines = movedLines(placesBefore, placesOf((await tree.fullTree()).treeData, [key]));
+                    if (!(await askBeforeMoving(lines))) {
+                        for (const m of sameFolder) {
+                            await profilesApi.updateProfileMod(m.id!, { sortOrder: m.sortOrder ?? 0 });
+                        }
+                        break;
+                    }
                 }
                 const pinned = await (await StorageAPI.getMods()).getModById(id);
                 await logActivity('info', t("log.list.pinned", { name: pinned?.displayName ?? `#${id}` }), undefined, 'list');

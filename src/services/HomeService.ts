@@ -3,6 +3,8 @@ import { path } from "@tauri-apps/api";
 import { ModioApi } from "@/apis/modio";
 import { ModcatApi, MODCAT_PLATFORM } from "@/apis/modcat";
 import { NexusModsApi, NEXUSMODS_PLATFORM } from "@/apis/nexusmods";
+import { choiceFor, followChoice } from "@/apis/nexusmods/files";
+import { NexusFileChoice } from "@/services/NexusFileChoice";
 import { StorageAPI } from "@/storage";
 import { ModService } from "@/services/ModService.ts";
 import { ProfileService } from "@/services/ProfileService.ts";
@@ -105,6 +107,48 @@ export class HomeService {
      * 从 Nexus Mods 链接添加 Mod
      */
     private async addModFromNexusmodsUrl(url: string, groupId: number): Promise<AddModFromUrlResult> {
+        const link = await this.withPickedNexusFile(url);
+        const result = await this.addNexusModsLink(link, groupId);
+        if (result.status !== "invalid") await this.rememberNexusFile(link);
+        return result;
+    }
+
+    /**
+     * A plain mod page link for a mod whose other file was picked before (e.g. from a shared list
+     * or its requirements): that file's link, so the same file is downloaded as before
+     */
+    private async withPickedNexusFile(url: string): Promise<string> {
+        const parsed = NexusModsApi.parseModLinks(url);
+        if (!parsed || parsed.fileId || parsed.key || parsed.directDownloadUrl) return url;
+        const choice = await NexusFileChoice.get(parsed.domain, parsed.modId);
+        if (!choice) return url;
+        let fileId = choice.fileId;
+        try {
+            const next = followChoice(await NexusModsApi.getFileList(parsed.domain, parsed.modId), choice);
+            if (next) fileId = next.fileId;
+        } catch (error) {
+            console.warn('[HomeService] picked Nexus file not followed', error);
+        }
+        return NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, fileId);
+    }
+
+    /**
+     * Which file of the mod the link picks (a Files-tab link, a download link): kept when it
+     * isn't the page's main download, so the update check follows that file
+     */
+    private async rememberNexusFile(url: string): Promise<void> {
+        const parsed = NexusModsApi.parseModLinks(url);
+        // a plain page link keeps what was picked before
+        if (!parsed?.fileId) return;
+        try {
+            const files = await NexusModsApi.getFileList(parsed.domain, parsed.modId);
+            await NexusFileChoice.set(parsed.domain, parsed.modId, choiceFor(files, parsed.fileId));
+        } catch (error) {
+            console.warn('[HomeService] picked Nexus file not remembered', error);
+        }
+    }
+
+    private async addNexusModsLink(url: string, groupId: number): Promise<AddModFromUrlResult> {
         const parsed = NexusModsApi.parseModLinks(url);
         if (!parsed) {
             return { status: "invalid" };

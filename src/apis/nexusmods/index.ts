@@ -22,6 +22,12 @@ import {
     type NexusModsSearchResult,
     type NexusModsV1Mod,
 } from './types';
+import { currentFiles, followChoice, NEXUS_FILE_FIELDS, toFileInfo, type NexusFileInfo } from './files';
+import { NexusFileChoice } from '@/services/NexusFileChoice';
+
+
+/** How long one Nexus Mods API request may take before it is tried again */
+const NEXUS_TIMEOUT_MS = 15_000;
 
 export {
     NEXUSMODS_DRG_DOMAIN,
@@ -47,6 +53,12 @@ const NEXUSMODS_APP_NAME = 'MintCat';
 const NEXUSMODS_APP_VERSION = '0.5.5';
 
 const authResolver = new AuthResolver();
+
+/** The files of mods looked at recently ("<gameId>:<modId>"), so paging back and forth asks once */
+const fileCache = new Map<string, { at: number; files: NexusFileInfo[] }>();
+const FILE_CACHE_MS = 10 * 60_000;
+/** Mods asked about in one files request */
+const FILES_PER_REQUEST = 40;
 
 type GraphqlResponse<T> = {
     data?: T;
@@ -391,7 +403,7 @@ export class NexusModsApi {
             const start = params.page * params.pageSize;
             const end = start + params.pageSize;
             return {
-                items: await NexusModsApi.withRequirements(filteredNodes.slice(start, end)),
+                items: await NexusModsApi.withDetails(filteredNodes.slice(start, end)),
                 total: filteredNodes.length,
                 page: params.page,
                 pageSize: params.pageSize,
@@ -406,7 +418,7 @@ export class NexusModsApi {
             count: requestPageSize,
         });
 
-        const items = await NexusModsApi.withRequirements(data.mods?.nodes ?? []);
+        const items = await NexusModsApi.withDetails(data.mods?.nodes ?? []);
         const total = data.mods?.totalCount ?? items.length;
         return {
             items,
@@ -415,6 +427,88 @@ export class NexusModsApi {
             pageSize: params.pageSize,
             hasMore: (params.page + 1) * params.pageSize < total,
         };
+    }
+
+    /** The requirements and the separate files of the mods shown (asked for side by side) */
+    private static async withDetails(nodes: NexusModsModNode[]): Promise<NexusModsModNode[]> {
+        await Promise.all([NexusModsApi.withRequirements(nodes), NexusModsApi.withFiles(nodes)]);
+        return nodes;
+    }
+
+    /** The files each mod's page lists now (shown on the card when there is more than one) */
+    private static async withFiles(nodes: NexusModsModNode[]): Promise<void> {
+        try {
+            const byKey = await NexusModsApi.getFilesForMods(nodes.map(n => ({gameId: n.gameId || n.game?.id, modId: n.modId})));
+            for (const node of nodes) {
+                const files = byKey.get(`${Number(node.gameId || node.game?.id)}:${Number(node.modId)}`);
+                if (files) node.files = currentFiles(files);
+            }
+        } catch (error) {
+            console.warn('[NexusModsApi] files not read:', error instanceof Error ? error.message : error);
+        }
+    }
+
+    /**
+     * All files (current and old) on the pages of these mods, from the public GraphQL API,
+     * keyed "<gameId>:<modId>"; up to 40 mods per request. Mods that couldn't be read are left out.
+     */
+    public static async getFilesForMods(mods: { gameId: number | string | undefined; modId: number | string }[]): Promise<Map<string, NexusFileInfo[]>> {
+        const out = new Map<string, NexusFileInfo[]>();
+        const missing: { gameId: number; modId: number; key: string }[] = [];
+        const now = Date.now();
+        for (const mod of mods) {
+            const gameId = Number(mod.gameId);
+            const modId = Number(mod.modId);
+            if (!(gameId > 0) || !(modId > 0)) continue;
+            const key = `${gameId}:${modId}`;
+            if (out.has(key) || missing.some(m => m.key === key)) continue;
+            const cached = fileCache.get(key);
+            if (cached && now - cached.at < FILE_CACHE_MS) out.set(key, cached.files);
+            else missing.push({gameId, modId, key});
+        }
+        for (let i = 0; i < missing.length; i += FILES_PER_REQUEST) {
+            const chunk = missing.slice(i, i + FILES_PER_REQUEST);
+            const variables: Record<string, string> = {};
+            const declarations: string[] = [];
+            const fields: string[] = [];
+            chunk.forEach((mod, n) => {
+                variables[`m${n}`] = String(mod.modId);
+                variables[`g${n}`] = String(mod.gameId);
+                declarations.push(`$m${n}: ID!, $g${n}: ID!`);
+                fields.push(`f${n}: modFiles(modId: $m${n}, gameId: $g${n}) { ${NEXUS_FILE_FIELDS} }`);
+            });
+            try {
+                const data = await NexusModsApi.graphql<Record<string, unknown[] | null>>(
+                    `query ModFiles(${declarations.join(', ')}) { ${fields.join(' ')} }`, variables, {partial: true});
+                chunk.forEach((mod, n) => {
+                    const list = data[`f${n}`];
+                    if (!Array.isArray(list)) return;
+                    const files = list.map(toFileInfo).filter((f): f is NexusFileInfo => !!f);
+                    fileCache.set(mod.key, {at: Date.now(), files});
+                    out.set(mod.key, files);
+                });
+            } catch (error) {
+                console.warn('[NexusModsApi] files not read:', error instanceof Error ? error.message : error);
+            }
+        }
+        return out;
+    }
+
+    /** All files on one mod's page; throws when Nexus couldn't be asked */
+    public static async getFileList(domain: string, modId: number, fresh = false): Promise<NexusFileInfo[]> {
+        const gameId = await NexusModsApi.getGameIdForDomain(domain);
+        if (!gameId) throw new Error(`Unknown Nexus game: ${domain}`);
+        if (fresh) fileCache.delete(`${gameId}:${modId}`);
+        const files = (await NexusModsApi.getFilesForMods([{gameId, modId}])).get(`${gameId}:${modId}`);
+        if (!files) throw new Error(`Files of ${domain} mod ${modId} not read`);
+        return files;
+    }
+
+    /** The mod page's Files tab with one file picked (what the Add Mod window and downloads take) */
+    public static getModFileUrl(domain: string, modId: number, fileId: number): string {
+        const url = new URL(NexusModsApi.getModFilesUrl(domain, modId));
+        url.searchParams.set('file_id', String(fileId));
+        return url.toString();
     }
 
     /**
@@ -596,6 +690,18 @@ export class NexusModsApi {
     public static async refreshResolvedMod(mod: CompleteModData): Promise<NexusModsResolvedMod | null> {
         const parsed = NexusModsApi.parseModLinks(mod.url || '');
         if (!parsed) return null;
+        // a file other than the main download was picked: follow that file's newer uploads
+        const choice = await NexusFileChoice.get(parsed.domain, parsed.modId);
+        if (choice) {
+            let fileId = choice.fileId;
+            try {
+                const next = followChoice(await NexusModsApi.getFileList(parsed.domain, parsed.modId, true), choice);
+                if (next) fileId = next.fileId;
+            } catch (error) {
+                console.warn('[NexusModsApi] picked file not followed:', error instanceof Error ? error.message : error);
+            }
+            return await NexusModsApi.getModInfoByLink(NexusModsApi.getModFileUrl(parsed.domain, parsed.modId, fileId));
+        }
         return await NexusModsApi.getModInfoByLink(NexusModsApi.getModUrl(parsed.domain, parsed.modId));
     }
 
@@ -731,7 +837,8 @@ export class NexusModsApi {
         return value;
     }
 
-    private static async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    /** `partial`: give what Nexus answered even when part of the query failed (e.g. one mod of many) */
+    private static async graphql<T>(query: string, variables: Record<string, unknown>, options: { partial?: boolean } = {}): Promise<T> {
         const send = (withoutKey: boolean) => NexusModsApi.requestJson<GraphqlResponse<T>>(NEXUSMODS_GRAPHQL_URL, {
             method: 'POST',
             body: JSON.stringify({ query, variables }),
@@ -751,7 +858,7 @@ export class NexusModsApi {
         if (response.errors?.length) {
             const errorMessage = response.errors.map((error) => error.message).filter(Boolean).join('; ') || 'Nexus Mods GraphQL error';
             console.warn('[NexusModsApi] GraphQL errors:', errorMessage);
-            throw new Error(errorMessage);
+            if (!options.partial || !response.data) throw new Error(errorMessage);
         }
         return response.data ?? ({} as T);
     }
@@ -785,6 +892,10 @@ export class NexusModsApi {
             method: options.method ?? 'GET',
             headers,
             body,
+            // the Nexus API is often slower than the 5 s default (files lists of mods with many
+            // files, busy hours): update checks of several mods timed out and those mods were skipped
+            timeoutMs: NEXUS_TIMEOUT_MS,
+            retry: {maxTry: 2, delayMs: 1000},
             proxyPolicy: 'mintcatProxyFallback',
             parseAs: 'response',
         });

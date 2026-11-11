@@ -4,6 +4,7 @@ import {Avatar, Button, Space, Skeleton, Tag, Tooltip} from 'antd';
 import {CalendarOutlined, CheckCircleFilled, DownloadOutlined, FileOutlined, LikeOutlined, PlusCircleOutlined, StarFilled, UserOutlined} from '@ant-design/icons';
 import type {ListedIndex, ListedState} from '@/services/ListedMods';
 import {CardRequirements, useRequirementPlan} from './CardRequirements';
+import {CardFiles, type FilePick} from './CardFiles';
 import {ModioSupportButtons, NexusSupportButtons} from '@/components/SupportButtons';
 import {nexusDomainOf} from '@/services/ModSupport';
 import type {NexusModsModNode} from '@/apis/nexusmods/types';
@@ -19,7 +20,8 @@ interface SearchResultCardProps {
     listed?: ListedState;
     /** Your lists, to mark requirements that are in them */
     index: ListedIndex;
-    onAdd: (item: SearchResultItem) => void;
+    /** `pick`: a file clicked on the card (mods with more than one) */
+    onAdd: (item: SearchResultItem, pick?: FilePick) => void;
     onTranslate: (itemId: string) => void;
     onRestore: (itemId: string) => void;
 }
@@ -62,6 +64,9 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
     // 处理添加点击
     const handleAddClick = useCallback(() => {
         onAdd(item);
+    }, [item, onAdd]);
+    const handlePick = useCallback((pick: FilePick) => {
+        onAdd(item, pick);
     }, [item, onAdd]);
 
     // 处理标题点击
@@ -156,6 +161,8 @@ export const SearchResultCard = memo<SearchResultCardProps>(({
                         </div>
 
                         <CardRequirements plan={plan}/>
+
+                        <CardFiles item={item} listed={listed} repoDetail={repoDetail} onPick={handlePick}/>
 
                         <div className="search-result-card-stats">
                             <Space size="middle">
