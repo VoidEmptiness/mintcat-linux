@@ -76,6 +76,13 @@ export class NexusModsAuthenticationRequiredError extends Error {
     }
 }
 
+export class NexusModsEndorseError extends Error {
+    constructor(public readonly code: string, detail: string) {
+        super(detail);
+        this.name = 'NexusModsEndorseError';
+    }
+}
+
 export class NexusModsApi {
     public static async getApiKey(): Promise<string> {
         return await authResolver.getNexusmodsToken();
@@ -83,6 +90,46 @@ export class NexusModsApi {
 
     public static async isAuthenticated(): Promise<boolean> {
         return !!(await NexusModsApi.getApiKey());
+    }
+
+    public static async getTrackedMods(): Promise<{ modId: number; domain: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string }[]>('/v1/user/tracked_mods.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase()}));
+    }
+
+    public static async getEndorsements(): Promise<{ modId: number; domain: string; status: string }[]> {
+        const data = await NexusModsApi.requestJson<{ mod_id?: number; domain_name?: string; status?: string }[]>('/v1/user/endorsements.json');
+        return (Array.isArray(data) ? data : [])
+            .filter(m => Number(m.mod_id) > 0 && m.domain_name)
+            .map(m => ({modId: Number(m.mod_id), domain: String(m.domain_name).toLowerCase(), status: String(m.status ?? '')}));
+    }
+
+    public static async setTracked(domain: string, modId: number, tracked: boolean): Promise<void> {
+        const query = new URLSearchParams({domain_name: domain});
+        if (!tracked) query.set('mod_id', String(modId));
+        await NexusModsApi.requestJson(`/v1/user/tracked_mods.json?${query}`, {
+            method: tracked ? 'POST' : 'DELETE',
+            form: {mod_id: String(modId)},
+            allowStatus: tracked ? [] : [404],
+        });
+    }
+
+    public static async setEndorsed(domain: string, modId: number, endorse: boolean, version?: string): Promise<string> {
+        const form: Record<string, string> = {};
+        if (version) form.version = version;
+        try {
+            const data = await NexusModsApi.requestJson<{ status?: string }>(
+                `/v1/games/${encodeURIComponent(domain)}/mods/${modId}/${endorse ? 'endorse' : 'abstain'}.json`,
+                {method: 'POST', form});
+            return String(data?.status ?? (endorse ? 'Endorsed' : 'Abstained'));
+        } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            const code = /\b(NOT_DOWNLOADED_MOD|TOO_SOON_AFTER_DOWNLOAD|IS_OWN_MOD)\b/.exec(text)?.[1];
+            if (code) throw new NexusModsEndorseError(code, text);
+            throw error;
+        }
     }
 
     public static getModUrl(domain: string, modId: number): string {
@@ -522,18 +569,25 @@ export class NexusModsApi {
         options: {
             method?: string;
             body?: string;
+            form?: Record<string, string>;
+            allowStatus?: number[];
             isFullUrl?: boolean;
             parseAsResponse?: boolean;
         } = {},
     ): Promise<T> {
         const headers = await NexusModsApi.getHeaders();
+        let body = options.body;
+        if (options.form) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            body = new URLSearchParams(options.form).toString();
+        }
         const url = options.isFullUrl ? pathOrUrl : `${NEXUSMODS_API_BASE_URL}${pathOrUrl}`;
         const result = await NetworkApi.request<Response>({
             service: 'nexusmods.request',
             url,
             method: options.method ?? 'GET',
             headers,
-            body: options.body,
+            body,
             proxyPolicy: 'mintcatProxyFallback',
             parseAs: 'response',
         });
@@ -541,6 +595,9 @@ export class NexusModsApi {
         const response = result.response;
         if (options.parseAsResponse) {
             return response as T;
+        }
+        if (!response.ok && options.allowStatus?.includes(response.status)) {
+            return {} as T;
         }
         if (!response.ok) {
             const message = await response.text().catch(() => '');

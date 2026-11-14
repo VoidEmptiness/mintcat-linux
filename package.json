@@ -14,7 +14,7 @@
     "package": "./scripts/build-release.sh",
     "package:frontend": "pnpm build && node scripts/package-frontend-zip.mjs",
     "package:integrator-runtime": "node scripts/package-integrator-runtime.mjs",
-    "package:integrator-runtime:dev": "cargo build -p mintcat-integrator-ffi --manifest-path src-tauri/Cargo.toml && cp src-tauri/target/debug/libmintcat_integrator.so src-tauri/target/debug/libmintcat_backend_runtime.so",
+    "package:integrator-runtime:dev": "cargo build -p mintcat-integrator-ffi --manifest-path src-tauri/Cargo.toml && cp src-tauri/target/debug/libmintcat_integrator.so src-tauri/target/debug/libmintcat_backend_runtime.so && mkdir -p src-tauri/assets/plugins && cp src-tauri/target/debug/libmintcat_backend_runtime.so src-tauri/assets/plugins/libmintcat_backend_runtime.so",
     "package:backend-runtime": "node scripts/package-integrator-runtime.mjs",
     "package:proxy-runtime:windows": "node scripts/package-proxy-runtime.mjs windows",
     "package:proxy-runtime:macos-aarch64": "node scripts/package-proxy-runtime.mjs macos-aarch64",

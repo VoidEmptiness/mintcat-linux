@@ -57,6 +57,7 @@ import {
 import { computeInstallManifestHash } from "@/tasks/ModInstallTask";
 import { getInternalAssetPaths, type InternalAssetGame } from "@/services/InternalAssetService";
 import { isUe4ssEnabled } from "@/utils/Ue4ssSetting";
+import { ModSupport } from "@/services/ModSupport";
 
 
 interface ModListPageState {
@@ -978,6 +979,8 @@ export class HomePage extends BasePage<any, ModListPageState> {
         if (!AppInitializer.isCoreReady()) {
             await AppInitializer.initializeCore();
         }
+
+        void ModSupport.refresh().catch(e => console.warn('[support] lists not read', e));
 
         // Pre-initialize UI ViewModels (optional but recommended for better UX)
         await IoC.get(TreeViewModel);

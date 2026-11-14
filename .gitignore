@@ -22,6 +22,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+
+src-tauri/assets/plugins/*.so
+src-tauri/assets/plugins/*.dylib
 dist
 dist-ssr
 *.local

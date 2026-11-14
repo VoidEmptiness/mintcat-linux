@@ -17,6 +17,13 @@ const MODIO_GAME_ID = 2475;
 const MODIO_UID = "13595141";
 const authResolver = new AuthResolver();
 
+export class ModioWriteError extends Error {
+    constructor(public readonly kind: 'readOnly' | 'inactive' | 'tooMany' | 'other', detail: string) {
+        super(detail);
+        this.name = 'ModioWriteError';
+    }
+}
+
 export class ModioApi {
     private static platformIdByNameIdCache = new Map<string, number>();
     private static platformIdByNameIdInFlight = new Map<string, Promise<number>>();
@@ -288,6 +295,68 @@ export class ModioApi {
             message.error(`${t("Fetch Subscribed Mods Error")}: ${e}`);
             return [];
         }
+    }
+
+    private static async writeRequest(method: 'POST' | 'DELETE', path: string, form: Record<string, string> = {}) {
+        const url = (await ModioApi.getHost()) + path;
+        const resp = (await NetworkApi.request<Response>({
+            service: 'modio.write',
+            url,
+            method,
+            authPolicy: 'modioToken',
+            proxyPolicy: 'mintcatProxyFallback',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'},
+            body: new URLSearchParams(form).toString(),
+            parseAs: 'response',
+        })).response;
+        if (resp.ok) return;
+        let errorRef = 0;
+        let detail = '';
+        try {
+            const data = await resp.json();
+            errorRef = Number(data?.error?.error_ref ?? 0);
+            detail = String(data?.error?.message ?? '');
+        } catch {
+        }
+        if (errorRef === 15028 || errorRef === 15043) return;
+        if (resp.status === 401) throw new ModioWriteError('readOnly', detail || `mod.io ${resp.status}`);
+        if (resp.status === 403 && errorRef === 11006) throw new ModioWriteError('inactive', detail);
+        if (resp.status === 429) throw new ModioWriteError('tooMany', detail);
+        throw new ModioWriteError('other', detail || `mod.io ${resp.status}`);
+    }
+
+    private static async getAllOfMine<T>(path: string): Promise<T[]> {
+        const result: T[] = [];
+        for (let offset = 0; offset < 5000; offset += 100) {
+            const data = await ModioApi.getRequest(`${path}${path.includes('?') ? '&' : '?'}game_id=${MODIO_GAME_ID}&_limit=100&_offset=${offset}`);
+            const page = (data?.data ?? []) as T[];
+            result.push(...page);
+            if (page.length < 100 || result.length >= Number(data?.result_total ?? 0)) break;
+        }
+        return result;
+    }
+
+    public static async getMySubscribedIds(): Promise<number[]> {
+        const mods = await ModioApi.getAllOfMine<{ id?: number; game_id?: number }>('/me/subscribed');
+        return mods
+            .filter(m => m.game_id == null || m.game_id === MODIO_GAME_ID)
+            .map(m => Number(m.id))
+            .filter(id => id > 0);
+    }
+
+    public static async getMyRatings(): Promise<Map<number, number>> {
+        const ratings = await ModioApi.getAllOfMine<{ mod_id?: number; game_id?: number; rating?: number }>('/me/ratings');
+        return new Map(ratings
+            .filter(r => (r.game_id == null || r.game_id === MODIO_GAME_ID) && Number(r.mod_id) > 0 && r.rating)
+            .map(r => [Number(r.mod_id), Number(r.rating)] as [number, number]));
+    }
+
+    public static async setSubscribed(modId: number, subscribed: boolean): Promise<void> {
+        await ModioApi.writeRequest(subscribed ? 'POST' : 'DELETE', `/games/${MODIO_GAME_ID}/mods/${modId}/subscribe`);
+    }
+
+    public static async setRating(modId: number, rating: 1 | -1 | 0): Promise<void> {
+        await ModioApi.writeRequest('POST', `/games/${MODIO_GAME_ID}/mods/${modId}/ratings`, {rating: String(rating)});
     }
 
     public static async getDependencies(modId: number) {

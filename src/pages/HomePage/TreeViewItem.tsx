@@ -33,6 +33,9 @@ import type {CompleteModData} from "@/storage/dao/ModDAO";
 import {TimeUtils} from "@/utils/TimeUtils.ts";
 import type {FolderInfo} from "./TreeView";
 import {ConflictService} from "@/services/ConflictService";
+import {ModStatusIcons} from "./ModStatusIcons";
+import {ModSupport, nexusDomainOf} from "@/services/ModSupport";
+import {handleSupportMenu, supportMenuItems} from "@/components/SupportButtons";
 
 const {useToken} = theme;
 
@@ -1016,6 +1019,13 @@ export function TreeViewItem({
         [nodeData.modId]
     );
 
+    const supportVersion = React.useSyncExternalStore(ModSupport.subscribe, ModSupport.version);
+    const supportKind = nodeData.platformId
+        ? nodeData.sourceType === NEXUSMODS_PLATFORM ? 'nexus' as const
+            : nodeData.sourceType === ModSourceType.Modio ? 'modio' as const : undefined
+        : undefined;
+    const nexusDomain = supportKind === 'nexus' ? nexusDomainOf(nodeData.url) : '';
+
     // 构建"移动到"子菜单
     const moveToChildren: MenuProps['items'] = folders
         ?.map(f => ({
@@ -1037,7 +1047,8 @@ export function TreeViewItem({
         }] : []),
         {label: t('Delete'), key: 'delete', icon: <DeleteOutlined />},
         {label: t('Copy Link'), key: 'copy_link', icon: <LinkOutlined />},
-        {label: t('Export'), key: 'export', icon: <ExportOutlined />}
+        {label: t('Export'), key: 'export', icon: <ExportOutlined />},
+        ...(supportMenuItems(supportKind, nexusDomain, nodeData.platformId, supportVersion) ?? [])
     ];
 
     if (nodeData.isLeaf) {
@@ -1050,6 +1061,8 @@ export function TreeViewItem({
                               if (e.key.startsWith('move_to_folder-')) {
                                   const targetFolderKey = e.key.replace('move_to_', '');
                                   onMoveToFolder?.(nodeData.key, targetFolderKey);
+                              } else if (handleSupportMenu(e.key, nexusDomain, nodeData.platformId,
+                                  nodeData.title || nodeData.nameId || '', nodeData.usedVersion || undefined)) {
                               } else {
                                   onMenuClick(e.key, nodeData.key);
                               }
@@ -1121,6 +1134,8 @@ export function TreeViewItem({
                         {(nodeData.sourceType === ModSourceType.Modio || nodeData.sourceType === MODCAT_PLATFORM || nodeData.sourceType === NEXUSMODS_PLATFORM) &&
                             <ModTreeViewProgressPercent nodeData={nodeData}/>
                         }
+
+                        <ModStatusIcons nodeData={nodeData}/>
                     </span>
                 </ModTreeViewProgressBackground>
             </Dropdown>

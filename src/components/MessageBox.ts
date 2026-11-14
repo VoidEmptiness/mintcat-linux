@@ -34,6 +34,17 @@ export class MessageBox {
         });
     }
 
+    static info(props: ModalFuncProps): void {
+        const run = (api: { info: (p: ModalFuncProps) => unknown }) => {
+            api.info(props);
+        };
+        if (themedModal) {
+            run(themedModal);
+        } else {
+            run(Modal);
+        }
+    }
+
 }
 
 /** 在 App 内挂载一次，使 MessageBox.confirm 使用 AntdApp 的 modal，从而跟随 ConfigProvider 主题 */

@@ -726,3 +726,23 @@ body::before {
 .ant-progress-rail {
    background-color: transparent !important; 
 }
+
+.mod-status-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-inline-start: 2px;
+}
+
+.mod-status-icon {
+    font-size: 13px;
+    color: var(--ant-color-text-tertiary);
+}
+
+.mod-status-on {
+    color: var(--ant-color-primary);
+}
+
+.mod-status-down {
+    color: var(--ant-color-error);
+}
