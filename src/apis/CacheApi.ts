@@ -2,6 +2,7 @@ import {writeFile, size, exists, mkdir, remove, readDir, copyFile} from "@tauri-
 import {cacheDir} from '@tauri-apps/api/path';
 import {path} from "@tauri-apps/api";
 import {convertFileSrc} from "@tauri-apps/api/core";
+import {isOwnDownload} from "@/services/DownloadsCatalog";
 import {md5} from "@/utils/CryptApi.ts";
 import {NetworkApi} from "@/apis/NetworkApi.ts";
 import {IntegrateApi} from "@/apis/IntegrateApi.ts";
@@ -47,6 +48,10 @@ export class CacheApi {
     private static legacySanitizeFileName(name: string): string {
         const illegalChars = /[\\/:*?"<>|]/g;
         return name.replace(illegalChars, '');
+    }
+
+    public static modCacheFileName(modName: string, version: string): string {
+        return CacheApi.buildModCacheFileName(modName, version);
     }
 
     private static buildModCacheFileName(modName: string, version: string): string {
@@ -195,7 +200,7 @@ export class CacheApi {
         if (entry.isDirectory) {
             return CacheApi.ownedCacheDirectories.has(name);
         }
-        return CacheApi.ownedCacheFiles.has(name) || name.endsWith(".zip") || name.endsWith(".part");
+        return CacheApi.ownedCacheFiles.has(name) || isOwnDownload(name);
     }
 
     private static async removeCacheEntry(cacheDirPath: string, entry: Awaited<ReturnType<typeof readDir>>[number]): Promise<boolean> {

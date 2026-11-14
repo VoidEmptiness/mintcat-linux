@@ -15,6 +15,7 @@ import {
 } from "@/services/HomeService.ts";
 import type {ModInfo} from "@/apis/modio/ModInfo.ts";
 import {NexusModsApi, showNexusModsApiKeyRequiredMessage} from "@/apis/nexusmods";
+import {Downloads} from "@/services/Downloads";
 
 /**
  * HomeViewModel handles mod operations and business logic
@@ -71,6 +72,7 @@ export class HomeViewModel extends BaseViewModel {
 
     public async removeMod(id: number): Promise<void> {
         await this.homeService.removeModFromActiveProfile(id);
+        await Downloads.afterRemove([id]);
     }
 
     public async setDisplayName(id: number, name: string): Promise<void> {

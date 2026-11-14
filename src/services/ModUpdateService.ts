@@ -10,6 +10,7 @@ import { TimeUtils } from "@/utils/TimeUtils.ts";
 import { StorageAPI } from "@/storage";
 import { ModMapper } from "@/mappers/ModMapper";
 import { IntegrateApi } from "@/apis/IntegrateApi";
+import { Downloads } from "@/services/Downloads";
 import StatusBar from "@/components/StatusBar.tsx";
 import type { CompleteModData } from "@/storage/dao/ModDAO";
 import type { ModInfo } from "@/apis/modio/ModInfo";
@@ -603,6 +604,7 @@ export class ModUpdateService {
      */
     public static async updateModFile(mod: CompleteModData) {
         let cachePath = "";
+        const previousCachePath = mod.download?.cachePath || "";
         const modsApi = await StorageAPI.getMods();
 
         if (mod.modId) {
@@ -684,6 +686,8 @@ export class ModUpdateService {
         if (mod.modId) {
             this.lastEmittedProgress.delete(mod.modId);
         }
+
+        await Downloads.afterUpdate(mod.modId!, previousCachePath, cachePath);
 
         await StatusBar.success(`${t("Update Finish")}: ${mod.displayName}`);
     }
